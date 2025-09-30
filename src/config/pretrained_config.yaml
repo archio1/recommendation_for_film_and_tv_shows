@@ -1,0 +1,23 @@
+paths:
+  dataset: "datasets/updated_combined_movies_tv_dataset_2024_2025.csv"
+  faiss_index: "faiss_index"  # Путь для сохранения/загрузки FAISS индекса
+
+embedding_model:
+  name: "sentence-transformers/all-MiniLM-L6-v2"
+  device: "cpu"  # Для эмбеддингов (можно изменить на "cuda" для RTX 4060 Ti)
+
+llm:
+  model_name: "meta-llama/Llama-3.2-3B-Instruct"
+  params:
+    temperature: 0.9  # Температура для генерации
+    max_new_tokens: 512  # Максимальная длина ответа
+  quantization:
+    load_in_4bit: true
+    bnb_4bit_use_double_quant: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_compute_dtype: "float16"
+  device_map: "auto"  # Автоматическое размещение на GPU (cuda:0)
+
+# Параметры FAISS ретривера
+retriever:
+  k: 8  # Количество возвращаемых документов
