@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "recommendation_for_film_and_tv_shows"
+version = "0.1.0"
+description = "A recommendation system using LightGCN and TMDB dataset with Llama integration"
+authors = [
+    { name = "Artem Tatarchuk, Bohdan Kulchitskiy", email = "arti123t@gmail.com" }
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { text = "MIT" }
+requires-python = ">=3.10"
+#keywords = ["recommendation", "LightGCN", "TMDB", "Llama"]
+#classifiers = [
+#    "Development Status :: 3 - Alpha",
+#    "Intended Audience :: Developers",
+#    "License :: OSI Approved :: MIT License",
+#    "Programming Language :: Python :: 3.13",
+#    "Topic :: Software Development :: Machine Learning",
+#]
+dependencies = [
+    "matplotlib",
+    "pandas",
+    "seaborn>=0.13.2",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+    "jupyterlab",
+]
+
+#[project.urls]
+#Repository = "https://github.com/yourusername/recommendation-for-film-and-tv-shows"
+#Issues = "https://github.com/yourusername/recommendation-for_film_and_tv_shows/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recommendation-for-film-and-tv_shows"]
+
+#[tool.ruff]
+#line-length = 88
+#select = ["E", "F", "W", "I"]
+
+#[tool.pytest.ini_options]
+#minversion = "6.0"
+#addopts = "-ra -q"
+
+#[tool.tox]
+#requires = ["tox>=4.19"]
+#env_list = ["3.13"]
