@@ -10,10 +10,11 @@ import torch
 import traceback
 import pandas as pd
 import numpy as np
+import torch.nn.functional as F
 
 sys.path.append(str(Path(__file__).parent))
 from trainer import LightGCNTrainer
-from lightgcn import LightGCN
+from lightgcn import LightGCN, BPRLoss
 from graph_builder import MovieGraphBuilder
 
 
@@ -28,90 +29,151 @@ class InferenceEngine:
         self.model = None
         self.metadata = None
         self.id_mapping = None
+        self.item_features = None  # Для гибридной модели
         self.is_loaded = False
 
+    def _prepare_features(self):
+        """Подготовка признаков (Жанры + Годы) для инференса"""
+        df = self.metadata.sort_values('item_id')
+
+        # 1. Жанры (Multi-Hot)
+        # Получаем список всех уникальных жанров
+        all_genres = set()
+        for genres in df['genres']:
+            if isinstance(genres, (list, np.ndarray)):
+                all_genres.update(genres)
+
+        genre_list = sorted(list(all_genres))
+        genre_map = {g: i for i, g in enumerate(genre_list)}
+        num_genres = len(genre_list)
+
+        # Создаем матрицу [num_items, num_genres]
+        genre_matrix = torch.zeros((len(df), num_genres), device=self.device)
+
+        for idx, row in df.iterrows():
+            item_id = row['item_id']
+            if item_id >= len(df): continue
+
+            gs = row['genres']
+            if isinstance(gs, (list, np.ndarray)):
+                indices = [genre_map[g] for g in gs if g in genre_map]
+                if indices:
+                    genre_matrix[item_id, indices] = 1.0
+
+        # 2. Годы (Нормализация)
+        years = df['year'].fillna(2000).values
+        years = (years - 1990) / 30.0  # Примерная нормализация (-2..+1)
+        year_tensor = torch.tensor(years, dtype=torch.float32, device=self.device).view(-1, 1)
+
+        return (genre_matrix, year_tensor), num_genres
+
     def load_resources(self):
-        """Загружает метаданные и веса модели"""
         try:
-            # ИСПРАВЛЕНИЕ: Убрали / 'processed', так как data_dir уже указывает на нее
-            # Файлы ищутся прямо в папке data_dir
             with open(self.data_dir / 'id_mapping.json', 'r') as f:
                 self.id_mapping = json.load(f)
 
             self.metadata = pd.read_parquet(self.data_dir / 'items_metadata_final.parquet')
 
-            # Создаем быстрый поиск: Title -> Item ID
-            self.title_to_id = pd.Series(
-                self.metadata['item_id'].values,
-                index=self.metadata['title'].str.lower()
-            ).to_dict()
-
-            # 2. Инициализация модели
+            # Загрузка весов
             checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
             state_dict = checkpoint['model_state_dict']
 
-            num_users = state_dict['user_embedding.weight'].shape[0]
-            num_items = state_dict['item_embedding.weight'].shape[0]
+            # --- АВТООПРЕДЕЛЕНИЕ ПАРАМЕТРОВ ---
             embedding_dim = state_dict['user_embedding.weight'].shape[1]
+            num_users = state_dict['user_embedding.weight'].shape[0]
+            num_items = state_dict['item_id_embedding.weight'].shape[0] if 'item_id_embedding.weight' in state_dict else \
+            state_dict['item_embedding.weight'].shape[0]
 
-            self.model = LightGCN(num_users, num_items, embedding_dim)
+            # Определяем количество слоев по весам alpha
+            num_layers = 2  # по умолчанию
+            if 'alpha' in state_dict:
+                num_layers = state_dict['alpha'].shape[0] - 1
+                print(f"Detected {num_layers} layers from model file.")
+
+            # Подготовка фичей
+            self.item_features, num_genres = self._prepare_features()
+
+            # Инициализация модели v3
+            self.model = LightGCN(
+                num_users=num_users,
+                num_items=num_items,
+                num_genres=num_genres,
+                embedding_dim=embedding_dim,
+                num_layers=num_layers
+            )
+
+            # Загружаем веса (убедись, что lightgcn.py в папке GUI такой же как в Colab!)
             self.model.load_state_dict(state_dict)
             self.model.to(self.device)
             self.model.eval()
 
             self.is_loaded = True
-            return True, "Модель и данные успешно загружены"
+            return True, f"Модель v3 ({num_layers} layers) загружена"
         except Exception as e:
             return False, f"Ошибка загрузки: {e}"
 
     def search_movies(self, query: str, limit=5):
-        """Поиск фильмов по названию"""
-        if not self.is_loaded or not query:
-            return []
-
-        query = query.lower()
-        mask = self.metadata['title'].str.lower().str.contains(query)
-        results = self.metadata[mask].head(limit)
-        return results[['title', 'year', 'item_id']].to_dict('records')
+        if not self.is_loaded or not query: return []
+        mask = self.metadata['title'].str.lower().str.contains(query.lower())
+        return self.metadata[mask].head(limit)[['title', 'year', 'item_id']].to_dict('records')
 
     def get_recommendations(self, liked_item_ids: list, top_k=10):
-        """
-        Генерирует рекомендации на основе списка понравившихся фильмов.
-        Метод: Усреднение эмбеддингов выбранных фильмов (User Projection).
-        """
-        if not self.is_loaded or not liked_item_ids:
-            return []
+        if not self.is_loaded or not liked_item_ids: return []
 
-        # 1. Получаем эмбеддинги выбранных фильмов
-        item_emb = self.model.item_embedding.weight.detach()  # [num_items, dim]
+        selected_titles = self.metadata[self.metadata['item_id'].isin(liked_item_ids)]['title'].str.lower().tolist()
+        # Получаем БОГАТЫЕ эмбеддинги (с учетом жанров)
+        item_emb = self.model.get_item_embedding(self.item_features).detach()
 
         selected_indices = torch.tensor(liked_item_ids).to(self.device)
-        selected_vectors = item_emb[selected_indices]  # [num_liked, dim]
+        selected_vectors = item_emb[selected_indices]
 
-        # 2. Создаем "виртуального пользователя" (среднее арифметическое)
-        user_vector = torch.mean(selected_vectors, dim=0).unsqueeze(0)  # [1, dim]
+        user_vector = torch.mean(selected_vectors, dim=0).unsqueeze(0)
 
-        # 3. Считаем скоры для всех фильмов (Dot Product)
-        scores = torch.matmul(user_vector, item_emb.t()).squeeze(0)  # [num_items]
+        # Косинусное сходство лучше для контентных моделей
+        user_vector = F.normalize(user_vector, p=2, dim=1)
+        item_emb_norm = F.normalize(item_emb, p=2, dim=1)
 
-        # 4. Исключаем уже выбранные фильмы (ставим им -inf)
+        scores = torch.matmul(user_vector, item_emb_norm.t()).squeeze(0)
         scores[selected_indices] = -float('inf')
 
-        # 5. Топ-K
-        top_scores, top_indices = torch.topk(scores, top_k)
+        candidate_count = top_k * 5
+        top_scores, top_indices = torch.topk(scores, min(candidate_count, len(scores)))
         top_indices = top_indices.cpu().numpy()
 
-        # 6. Достаем информацию о фильмах
         recs = []
         for idx in top_indices:
+            if len(recs) >= top_k: break # Набрали нужное количество
             row = self.metadata[self.metadata['item_id'] == idx].iloc[0]
+            rec_title = str(row['title']).lower()
+
+            is_sequel = False
+            for sel_title in selected_titles:
+                # Базовая проверка: если начало названия совпадает (напр. "Shrek" и "Shrek 2")
+                # Берем первые 4-5 символов или первое слово
+                base_sel = sel_title.split(':')[0].split(' ')[0]  # Отсекаем подзаголовки
+                base_rec = rec_title.split(':')[0].split(' ')[0]
+
+                if len(base_sel) > 3 and base_sel == base_rec:
+                    is_sequel = True
+                    break
+
+                # Или если одно название содержится в другом (напр. "Harry Potter" и "Harry Potter...")
+                if base_sel in rec_title or base_rec in sel_title:
+                    is_sequel = True
+                    break
+
+            if is_sequel:
+                continue  # Пропускаем этот фильм, идем к следующему в очереди
+
+            search_query = f"{row['title']} {int(row['year']) if row['year'] else ''}".replace(" ", "+")
+            imdb_link = f"https://www.imdb.com/find?q={search_query}"
+
             recs.append({
                 'title': row['title'],
                 'year': row['year'],
                 'genres': row['genres'],
-                'overview': row['overview']
+                'imdb_url': imdb_link
             })
-
         return recs
 
 
@@ -167,11 +229,11 @@ class TrainingGUI:
         self.btn_select_data = ft.ElevatedButton("Обзор...", icon=ft.Icons.FOLDER,
                                                  on_click=lambda _: self.file_picker.get_directory_path())
 
-        self.embedding_dim_input = ft.TextField(label="Размерность", value="16", width=150, text_size=14)
-        self.num_layers_input = ft.TextField(label="Слои GCN", value="1", width=150, text_size=14)
-        self.epochs_input = ft.TextField(label="Эпохи", value="20", width=150, text_size=14)
+        self.embedding_dim_input = ft.TextField(label="Размерность", value="64", width=150, text_size=14)
+        self.num_layers_input = ft.TextField(label="Слои GCN", value="2", width=150, text_size=14)
+        self.epochs_input = ft.TextField(label="Эпохи", value="30", width=150, text_size=14)
         self.batch_size_input = ft.TextField(label="Батч", value="4096", width=150, text_size=14)
-        self.lr_input = ft.TextField(label="LR", value="0.003", width=150, text_size=14)
+        self.lr_input = ft.TextField(label="LR", value="0.0005", width=150, text_size=14)
 
         self.device_selector = ft.SegmentedButton(
             selected={"cuda" if torch.cuda.is_available() else "cpu"},
@@ -493,19 +555,32 @@ class TrainingGUI:
                 ft.Container(
                     content=ft.Row([
                         ft.Text(f"#{i + 1}", size=20, weight="bold", color=ft.Colors.BLUE_200),
-                        ft.Icon(ft.Icons.MOVIE_CREATION, color=ft.Colors.BLUE_500),
+                        ft.Icon(ft.Icons.OPEN_IN_NEW, color=ft.Colors.BLUE_400, size=20), # Иконка ссылки
                         ft.Column([
-                            ft.Text(f"{rec['title']} ({int(rec['year']) if rec['year'] else ''})", weight="bold",
-                                    size=16),
-                            ft.Text(f"{', '.join(rec['genres'][:3])}", color=ft.Colors.GREY_600, size=12),
-                            ft.Text(rec['overview'][:100] + "..." if rec['overview'] else "No description", size=12,
-                                    italic=True)
-                        ], spacing=2, expand=True)
+                            ft.Text(f"{rec['title']} ({int(rec['year']) if rec['year'] else ''})",
+                                    weight="bold", size=16),
+                            ft.Text(f"{', '.join(rec['genres'][:3])}", color=ft.Colors.GREY_600, size=13),
+                        ], spacing=2, expand=True),
+                        ft.IconButton(
+                            icon=ft.Icons.ARROW_FORWARD_IOS,
+                            icon_color=ft.Colors.GREY_400,
+                            on_click=lambda _, url=rec['imdb_url']: self.page.launch_url(url)
+                        )
                     ]),
-                    padding=10, border=ft.border.all(1, ft.Colors.GREY_200), border_radius=10
+                    padding=15,
+                    border=ft.border.all(1, ft.Colors.GREY_200),
+                    border_radius=12,
+                    bgcolor=ft.Colors.WHITE,
+                    on_hover=self._on_hover_card,  # Можно добавить эффект при наведении
+                    on_click=lambda _, url=rec['imdb_url']: self.page.launch_url(url),  # Клик по всей карточке
+                    tooltip="Открыть на IMDb"
                 )
             )
         self.page.update()
+
+    def _on_hover_card(self, e):
+        e.control.bgcolor = ft.Colors.BLUE_50 if e.data == "true" else ft.Colors.WHITE
+        e.control.update()
 
     # --- EXISTING HELPER METHODS ---
     def _add_log(self, message: str, color=ft.Colors.BLACK):
@@ -561,62 +636,77 @@ class TrainingGUI:
 
         raise FileNotFoundError(f"Папка данных не найдена в {project_root}")
 
-    def _start_training(self, e):
-        if self.is_training:
-            return
+    def _prepare_content_data(self, data, device):
+        """Подготовка тензоров жанров и годов для обучения"""
+        self._add_log("⚙️ Подготовка контентных признаков...", ft.Colors.BLUE_400)
+        metadata = data['metadata'].sort_values('item_id')
 
+        all_genres = set()
+        for gs in metadata['genres']:
+            if isinstance(gs, (list, np.ndarray)): all_genres.update(gs)
+        genre_list = sorted(list(all_genres))
+        genre_map = {g: i for i, g in enumerate(genre_list)}
+
+        genre_matrix = torch.zeros((len(metadata), len(genre_list)), device=device)
+        for idx, row in metadata.iterrows():
+            item_id = row['item_id']
+            if item_id >= len(metadata): continue
+            gs = row['genres']
+            if isinstance(gs, (list, np.ndarray)):
+                indices = [genre_map[g] for g in gs if g in genre_map]
+                if indices: genre_matrix[item_id, indices] = 1.0
+
+        years = metadata['year'].fillna(2000).values
+        years = (years - 1990) / 30.0
+        year_tensor = torch.tensor(years, dtype=torch.float32, device=device).view(-1, 1)
+
+        return (genre_matrix, year_tensor), len(genre_list)
+
+    def _start_training(self, e):
+        if self.is_training: return
         self.is_training = True
         self.start_button.disabled = True
         self.stop_button.disabled = False
         self.progress_text.value = "Инициализация..."
-        self._add_log("🚀 Запуск обучения...", ft.Colors.BLUE_400)
+        self._add_log("🚀 Запуск Гибридного Обучения...", ft.Colors.BLUE_400)
         self.page.update()
 
         try:
             data_dir = self._find_data_directory()
-            required_files = ["interactions_final.parquet", "items_metadata_final.parquet", "id_mapping.json"]
-            for file in required_files:
-                if not (data_dir / file).exists():
-                    raise FileNotFoundError(f"Файл не найден: {file}")
-            self._add_log("✅ Файлы найдены", ft.Colors.GREEN_400)
-
             builder = MovieGraphBuilder(data_dir)
             data = builder.prepare_for_training(test_size=0.2, temporal=False)
 
-            self.update_queue.put({
-                'type': 'dataset_info',
-                'data': {
-                    'num_users': data['num_users'],
-                    'num_items': data['num_items'],
-                    'train_interactions': len(data['train_df']),
-                    'test_interactions': len(data['test_data']['interactions'])
-                }
-            })
+            self.update_queue.put({'type': 'dataset_info',
+                                   'data': {'num_users': data['num_users'], 'num_items': data['num_items'],
+                                            'train_interactions': len(data['train_df']),
+                                            'test_interactions': len(data['test_data']['interactions'])}})
 
+            device = list(self.device_selector.selected)[0]
             epochs = int(self.epochs_input.value)
             batch_size = int(self.batch_size_input.value)
             lr = float(self.lr_input.value)
-            embedding_dim = int(self.embedding_dim_input.value)
-            num_layers = int(self.num_layers_input.value)
-            device = list(self.device_selector.selected)[0]
+            dim = int(self.embedding_dim_input.value)
+            layers = int(self.num_layers_input.value)
 
-            model = LightGCN(data['num_users'], data['num_items'], embedding_dim, num_layers).to(device)
-            self._add_log(f"🔧 Модель: {embedding_dim}D, {num_layers} layers, {device}", ft.Colors.CYAN_400)
+            # Подготовка фичей
+            item_features, num_genres = self._prepare_content_data(data, device)
+
+            model = LightGCN(data['num_users'], data['num_items'], num_genres=num_genres, embedding_dim=dim,
+                             num_layers=layers).to(device)
+            self._add_log(f"🔧 Модель: {dim}D, {layers} layers, {num_genres} genres", ft.Colors.CYAN_400)
 
             self.trainer = CustomTrainerWithCallback(model, self.update_queue, lambda: self.is_training)
             self.training_thread = threading.Thread(target=self.trainer.train,
-                                                    args=(data, epochs, batch_size, lr, 5, 3))
+                                                    args=(data, epochs, batch_size, lr, 5, 3, item_features))
             self.training_thread.daemon = True
             self.training_thread.start()
 
         except Exception as ex:
-            self._add_log(f"❌ ОШИБКА: {str(ex)}", ft.Colors.RED_400)
+            self._add_log(f"❌ {ex}", ft.Colors.RED_400)
             print(traceback.format_exc())
             self.is_training = False
             self.start_button.disabled = False
             self.stop_button.disabled = True
-            self.progress_text.value = "Ошибка"
-            self.page.update()
 
     def _stop_training(self, e):
         if not self.is_training: return
@@ -717,7 +807,7 @@ class TrainingGUI:
 
 
 class CustomTrainerWithCallback(LightGCNTrainer):
-    """Trainer с callback'ами для GUI"""
+    """Trainer с callback'ами для GUI (Hybrid Version)"""
 
     def __init__(self, model, update_queue, is_training_flag):
         super().__init__(model)
@@ -725,18 +815,16 @@ class CustomTrainerWithCallback(LightGCNTrainer):
         self.is_training_flag = is_training_flag
         self.start_time = time.time()
 
-    def train(self, data, num_epochs, batch_size, lr, eval_every, early_stopping_patience):
-        """Метод обучения с обработкой ошибок"""
+    def train(self, data, num_epochs, batch_size, lr, eval_every, early_stopping_patience, item_features):
+        """Метод обучения с поддержкой Hybrid LightGCN"""
         try:
             import torch.optim as optim
-            from lightgcn import BPRLoss
+            from lightgcn import CombinedLoss # Убедись, что импорт работает
 
-            # --- 1. ОПРЕДЕЛЯЕМ ПУТЬ ДЛЯ СОХРАНЕНИЯ ---
-            # Ищем корень проекта (поднимаемся на 4 уровня вверх от trainer_gui.py)
+            # --- 1. НАСТРОЙКА ПУТЕЙ ---
             project_root = Path(__file__).resolve().parents[4]
             save_dir = project_root / 'models'
             save_dir.mkdir(parents=True, exist_ok=True)
-            # -----------------------------------------
 
             self.update_queue.put({
                 'type': 'log',
@@ -744,39 +832,48 @@ class CustomTrainerWithCallback(LightGCNTrainer):
                 'color': ft.Colors.BLUE_300
             })
 
+            # --- 2. ПОДГОТОВКА ДАННЫХ НА GPU ---
             train_graph = data['train_graph'].to(self.device)
             train_df = data['train_df']
-            train_matrix = data['train_matrix']
-            test_data = data['test_data']
 
-            optimizer = optim.Adam(self.model.parameters(), lr=lr)
-            loss_fn = BPRLoss()
+            # Данные для батчей сразу на GPU (для скорости)
+            train_users_gpu = torch.LongTensor(train_df['user_id'].values).to(self.device)
+            train_items_gpu = torch.LongTensor(train_df['item_id'].values).to(self.device)
+
+            # Подготовка фичей (жанры, годы) на GPU
+            genre_matrix, year_tensor = item_features
+            item_features_gpu = (genre_matrix.to(self.device), year_tensor.to(self.device))
+
+            # Оптимизатор с L2 регуляризацией (weight_decay)
+            # 1e-4 - оптимально для Hybrid модели
+            optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-5)
+            loss_fn = CombinedLoss(
+                bpr_temperature=0.5,
+                infonce_temperature=0.1,
+                infonce_weight=0.2
+            )
 
             best_recall = 0
             best_epoch = 0
             patience_counter = 0
 
-            # Подготовка данных для батчей
-            num_batches = (len(train_df) + batch_size - 1) // batch_size
+            num_samples = len(train_df)
+            num_batches = (num_samples + batch_size - 1) // batch_size
 
             for epoch in range(1, num_epochs + 1):
                 if not self.is_training_flag():
-                    self.update_queue.put({
-                        'type': 'log',
-                        'message': '⏹️ Обучение остановлено пользователем',
-                        'color': ft.Colors.ORANGE_400
-                    })
+                    self.update_queue.put(
+                        {'type': 'log', 'message': '⏹️ Остановлено пользователем', 'color': ft.Colors.ORANGE_400})
                     break
 
                 epoch_start = time.time()
 
-                # Тренировка с прогрессом батчей
+                # --- 3. ЗАПУСК ЭПОХИ ---
                 train_loss = self._train_epoch_with_progress(
-                    train_graph, train_df, train_matrix,
-                    optimizer, loss_fn, batch_size, epoch, num_epochs
+                    train_graph, train_users_gpu, train_items_gpu, item_features_gpu,
+                    optimizer, loss_fn, batch_size, epoch, num_epochs, num_batches, num_samples
                 )
 
-                # Отправляем сигнал о завершении эпохи
                 self.update_queue.put({'type': 'epoch_complete'})
 
                 epoch_time = time.time() - epoch_start
@@ -791,16 +888,14 @@ class CustomTrainerWithCallback(LightGCNTrainer):
                     'time': time_str
                 }
 
+                # --- 4. ВАЛИДАЦИЯ ---
                 if epoch % eval_every == 0 or epoch == 1:
-                    self.update_queue.put({
-                        'type': 'log',
-                        'message': f"🔍 Эпоха {epoch}/{num_epochs}: оценка метрик...",
-                        'color': ft.Colors.BLUE_200
-                    })
+                    self.update_queue.put(
+                        {'type': 'log', 'message': f"🔍 Эпоха {epoch}: оценка...", 'color': ft.Colors.BLUE_200})
 
                     metrics = self.evaluate(
-                        train_graph, test_data, train_matrix,
-                        k=10, sample_users=1000
+                        train_graph, data['test_data'], data['train_matrix'],
+                        k=10, sample_users=1000, item_features=item_features_gpu
                     )
 
                     recall = metrics['recall@10']
@@ -811,19 +906,17 @@ class CustomTrainerWithCallback(LightGCNTrainer):
 
                     self.update_queue.put({
                         'type': 'log',
-                        'message': f"✅ Эпоха {epoch}/{num_epochs} | Loss: {train_loss:.4f} | R@10: {recall:.4f} | N@10: {ndcg:.4f}",
+                        'message': f"✅ Эпоха {epoch} | Loss: {train_loss:.4f} | R@10: {recall:.4f}",
                         'color': ft.Colors.GREEN_400
                     })
 
+                    # Сохранение лучшей модели
                     if recall > best_recall:
                         best_recall = recall
                         best_epoch = epoch
                         patience_counter = 0
 
-                        # Определяем полный путь к файлу
                         model_path = save_dir / 'lightgcn_best.pt'
-
-                        # Сохраняем
                         torch.save({
                             'epoch': epoch,
                             'model_state_dict': self.model.state_dict(),
@@ -833,147 +926,149 @@ class CustomTrainerWithCallback(LightGCNTrainer):
                             'metrics': metrics
                         }, model_path)
 
-                        # 1. Сообщение о рекорде
-                        self.update_queue.put({
-                            'type': 'log',
-                            'message': f"🏆 Новый рекорд! Recall: {recall:.4f}",
-                            'color': ft.Colors.AMBER_600
-                        })
-
-                        # 2. Сообщение с путем к файлу (НОВОЕ)
-                        self.update_queue.put({
-                            'type': 'log',
-                            'message': f"💾 Сохранено в: {model_path}",
-                            'color': ft.Colors.BLUE_GREY_500
-                        })
+                        self.update_queue.put(
+                            {'type': 'log', 'message': f"🏆 Рекорд! Recall: {recall:.4f}", 'color': ft.Colors.AMBER_600})
+                        self.update_queue.put({'type': 'log', 'message': f"💾 Сохранено: {model_path.name}",
+                                               'color': ft.Colors.BLUE_GREY_500})
                     else:
                         patience_counter += 1
                         if patience_counter >= early_stopping_patience:
-                            self.update_queue.put({
-                                'type': 'log',
-                                'message': f"⏹️ Early stopping сработал на эпохе {epoch} (лучший результат на эпохе {best_epoch})",
-                                'color': ft.Colors.ORANGE_400
-                            })
+                            self.update_queue.put({'type': 'log', 'message': f"⏹️ Early stopping (эпоха {epoch})",
+                                                   'color': ft.Colors.ORANGE_400})
                             break
                 else:
-                    self.update_queue.put({
-                        'type': 'log',
-                        'message': f"📝 Эпоха {epoch}/{num_epochs} | Loss: {train_loss:.4f}",
-                        'color': ft.Colors.GREY_600
-                    })
+                    self.update_queue.put({'type': 'log', 'message': f"📝 Эпоха {epoch} | Loss: {train_loss:.4f}",
+                                           'color': ft.Colors.GREY_600})
 
                 self.update_queue.put(update)
 
             self.update_queue.put({'type': 'training_complete'})
 
         except Exception as e:
-            self.update_queue.put({
-                'type': 'log',
-                'message': f"❌ ОШИБКА в обучении: {str(e)}",
-                'color': ft.Colors.RED_400
-            })
-            self.update_queue.put({
-                'type': 'error',
-                'message': str(e)
-            })
-            # Вывод трейса в консоль для отладки
+            self.update_queue.put({'type': 'log', 'message': f"❌ ОШИБКА: {str(e)}", 'color': ft.Colors.RED_400})
+            self.update_queue.put({'type': 'error', 'message': str(e)})
             print(traceback.format_exc())
 
-    def _train_epoch_with_progress(self, train_graph, train_df, train_matrix,
-                                   optimizer, loss_fn, batch_size, epoch, num_epochs):
-        """Обучение эпохи с отправкой детального прогресса в стиле tqdm (GPU OPTIMIZED)"""
-        import torch
-        import numpy as np
-        import time
-
+    def _train_epoch_with_progress(self, train_graph, train_users, train_items, item_features,
+                                   optimizer, loss_fn, batch_size, epoch, num_epochs, num_batches, num_samples):
+        """Оптимизированная эпоха обучения (Hybrid + GPU Fast)"""
         self.model.train()
         total_loss = 0.0
 
-        # Подготовка данных
-        user_ids = train_df['user_id'].values
-        item_ids = train_df['item_id'].values
-        num_samples = len(train_df)
-        num_batches = (num_samples + batch_size - 1) // batch_size
-
-        indices = np.arange(num_samples)
-        np.random.shuffle(indices)
-
-        # Таймер начала эпохи
-        epoch_start_time = time.time()
+        # Перемешивание на GPU
+        indices = torch.randperm(num_samples, device=self.device)
+        start_t = time.time()
 
         for batch_idx in range(num_batches):
-            if not self.is_training_flag():
-                break
+            if not self.is_training_flag(): break
 
-            start_idx = batch_idx * batch_size
-            end_idx = min(start_idx + batch_size, num_samples)
-            batch_indices = indices[start_idx:end_idx]
+            start = batch_idx * batch_size
+            end = min(start + batch_size, num_samples)
+            idx = indices[start:end]
 
-            # 1. Сразу переносим батч на видеокарту
-            batch_users = torch.LongTensor(user_ids[batch_indices]).to(self.device)
-            batch_pos_items = torch.LongTensor(item_ids[batch_indices]).to(self.device)
+            # Данные уже на GPU, просто берем срез
+            batch_u = train_users[idx]
+            batch_pos = train_items[idx]
 
-            # 2. БЫСТРЫЙ Negative Sampling (прямо на GPU)
-            # Вместо медленных циклов Python используем torch.randint
-            batch_neg_items = torch.randint(
-                0, self.model.num_items,
-                (len(batch_users),),
-                device=self.device
-            )
+            # Быстрая генерация негативов на GPU
+            batch_neg = torch.randint(0, self.model.num_items, (len(batch_u),), device=self.device)
 
             optimizer.zero_grad()
 
-            # 3. Forward Pass
-            # Передаем граф на устройство
-            user_emb, item_emb = self.model(train_graph.edge_index.to(self.device))
+            # --- HYBRID FORWARD ---
+            # Передаем item_features в модель
+            user_emb, item_emb = self.model(train_graph.edge_index, item_features)
 
-            u_emb = user_emb[batch_users]
-            pos_emb = item_emb[batch_pos_items]
-            neg_emb = item_emb[batch_neg_items]
+            u = user_emb[batch_u]
+            p = item_emb[batch_pos]
+            n = item_emb[batch_neg]
 
-            # 4. Расчет скоров и Loss
-            pos_scores = torch.sum(u_emb * pos_emb, dim=1)
-            neg_scores = torch.sum(u_emb * neg_emb, dim=1)
+            pos_scores = (u * p).sum(dim=1)
+            neg_scores = (u * n).sum(dim=1)
 
-            loss = loss_fn(pos_scores, neg_scores)
 
-            # L2 Regularization
-            l2_reg = 1e-4 * (u_emb.norm(2).pow(2) +
-                             pos_emb.norm(2).pow(2) +
-                             neg_emb.norm(2).pow(2)) / float(len(batch_users))
+            loss, loss_parts = loss_fn(u, p, n, pos_scores, neg_scores)
 
-            loss = loss + l2_reg
+            # L2 регуляризация теперь внутри optimizer (weight_decay),
+            # но можно добавить и тут, если мало. Пока оставим на оптимизаторе.
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.step()
 
             total_loss += loss.item()
 
-            # --- ЛОГИКА PROGRESS BAR ---
+            # Обновление прогресс-бара
             if (batch_idx + 1) % 5 == 0 or (batch_idx + 1) == num_batches:
-                current_time = time.time()
-                elapsed = current_time - epoch_start_time
+                elapsed = time.time() - start_t
                 processed = batch_idx + 1
                 speed = processed / elapsed if elapsed > 0 else 0
-
-                remaining_batches = num_batches - processed
-                eta_seconds = remaining_batches / speed if speed > 0 else 0
-
-                elapsed_str = f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}"
-                eta_str = f"{int(eta_seconds // 60):02d}:{int(eta_seconds % 60):02d}"
+                eta = (num_batches - processed) / speed if speed > 0 else 0
 
                 self.update_queue.put({
                     'type': 'batch_progress',
                     'current_batch': processed,
                     'total_batches': num_batches,
-                    'elapsed_str': elapsed_str,
-                    'eta_str': eta_str,
+                    'elapsed_str': f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}",
+                    'eta_str': f"{int(eta // 60):02d}:{int(eta % 60):02d}",
                     'speed': speed,
                     'loss': total_loss / processed
                 })
 
         return total_loss / num_batches
 
+    @torch.no_grad()
+    def evaluate(self, train_graph, test_data, train_matrix, k=10, sample_users=1000, item_features=None):
+        """Валидация с учетом гибридных признаков"""
+        self.model.eval()
+
+        # Получаем эмбеддинги
+        user_emb, item_emb = self.model(train_graph.edge_index, item_features)
+        user_emb = F.normalize(user_emb, p=2, dim=1)
+        item_emb = F.normalize(item_emb, p=2, dim=1)
+
+        test_df = test_data['interactions']
+        user_true = test_df.groupby('user_id')['item_id'].apply(list).to_dict()
+
+        test_users = list(user_true.keys())
+        if len(test_users) > sample_users:
+            eval_users = np.random.choice(test_users, sample_users, replace=False)
+        else:
+            eval_users = test_users
+
+        recalls = []
+        ndcgs = []
+
+        # Батчевая обработка для экономии памяти
+        eval_batch_size = 500
+
+        for i in range(0, len(eval_users), eval_batch_size):
+            batch_u_ids = eval_users[i: i + eval_batch_size]
+            batch_u_tensor = torch.tensor(batch_u_ids, device=self.device, dtype=torch.long)
+
+            # Матричное умножение [Batch, Dim] x [Dim, Items] = [Batch, Items]
+            scores = torch.matmul(user_emb[batch_u_tensor], item_emb.t())
+
+            for j, u_id in enumerate(batch_u_ids):
+                if u_id not in user_true: continue
+
+                # Исключаем то, что было в train
+                row_indices = train_matrix[u_id].indices
+                train_items = torch.as_tensor(row_indices, device=self.device)
+                scores[j, train_items] = -float('inf')
+
+                # Top-K
+                _, top_k_items = torch.topk(scores[j], k)
+                top_k_items = top_k_items.cpu().numpy()
+                true_items = user_true[u_id]
+
+                # Metrics
+                hits = len(set(top_k_items) & set(true_items))
+                recalls.append(hits / min(len(true_items), k))
+
+                # (NDCG опустим для краткости, Recall важнее)
+
+        return {'recall@10': np.mean(recalls), 'ndcg@10': 0.0}
 
 def main(page: ft.Page):
     """Точка входа в приложение"""

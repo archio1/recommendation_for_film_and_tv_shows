@@ -614,14 +614,14 @@ def main():
 
     processor = MovieDatasetProcessor(
         data_dir=data_dir,
-        top_n_movies=3000,  # УМЕНЬШЕНО с 10000
-        top_n_tv=1000,  # УМЕНЬШЕНО с 5000
+        top_n_movies=12000,
+        top_n_tv=2000,
         min_year=None,
         languages=['en'],
-        min_user_interactions=30,  # УВЕЛИЧЕНО с 20
-        min_item_interactions=50,  # УВЕЛИЧЕНО с 20
-        rating_threshold=4.0,
-        max_interactions=3_000_000  # НОВЫЙ: жёсткий лимит!
+        min_user_interactions=10,
+        min_item_interactions=10,
+        rating_threshold=3.5,
+        max_interactions=10_000_000
     )
 
     success = processor.process()

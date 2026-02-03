@@ -14,7 +14,7 @@ class MovieGraphBuilder:
     """Строит биpartite граф user-item для LightGCN"""
 
     def __init__(self, data_dir: Path):
-        self.data_processed = data_dir / 'processed'
+        self.data_processed = data_dir
 
         # Загружаем данные
         self.interactions = pd.read_parquet(self.data_processed / 'interactions_final.parquet')
