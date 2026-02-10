@@ -114,66 +114,94 @@ class InferenceEngine:
 
     def search_movies(self, query: str, limit=5):
         if not self.is_loaded or not query: return []
-        mask = self.metadata['title'].str.lower().str.contains(query.lower())
-        return self.metadata[mask].head(limit)[['title', 'year', 'item_id']].to_dict('records')
 
-    def get_recommendations(self, liked_item_ids: list, top_k=10):
+        query = query.lower().strip()
+
+        # 1. Находим все совпадения (без ограничения head здесь)
+        mask = self.metadata['title'].str.lower().str.contains(query, na=False)
+        matches = self.metadata[mask].copy()
+
+        if matches.empty:
+            return []
+
+        # 2. СОРТИРОВКА ПО ПОПУЛЯРНОСТИ (Это ключ к успеху)
+        # В твоем датасете должны быть колонки 'vote_count' или 'popularity'
+        if 'vote_count' in matches.columns:
+            matches = matches.sort_values('vote_count', ascending=False)
+        elif 'popularity' in matches.columns:
+            matches = matches.sort_values('popularity', ascending=False)
+
+        # 3. Дополнительный бонус: точные совпадения выше частичных
+        # (Например, чтобы "Seven" было выше, чем "Seven Years in Tibet")
+        matches['exact_match'] = matches['title'].str.lower() == query
+        matches = matches.sort_values(
+            ['exact_match', 'vote_count' if 'vote_count' in matches.columns else 'popularity'],
+            ascending=[False, False])
+
+        return matches.head(limit)[['title', 'year', 'item_id']].to_dict('records')
+
+    def get_recommendations(self, liked_item_ids: list, top_k=8):
         if not self.is_loaded or not liked_item_ids: return []
 
         selected_titles = self.metadata[self.metadata['item_id'].isin(liked_item_ids)]['title'].str.lower().tolist()
-        # Получаем БОГАТЫЕ эмбеддинги (с учетом жанров)
         item_emb = self.model.get_item_embedding(self.item_features).detach()
 
         selected_indices = torch.tensor(liked_item_ids).to(self.device)
         selected_vectors = item_emb[selected_indices]
-
         user_vector = torch.mean(selected_vectors, dim=0).unsqueeze(0)
 
-        # Косинусное сходство лучше для контентных моделей
         user_vector = F.normalize(user_vector, p=2, dim=1)
         item_emb_norm = F.normalize(item_emb, p=2, dim=1)
 
         scores = torch.matmul(user_vector, item_emb_norm.t()).squeeze(0)
         scores[selected_indices] = -float('inf')
 
-        candidate_count = top_k * 5
+        candidate_count = 100
         top_scores, top_indices = torch.topk(scores, min(candidate_count, len(scores)))
         top_indices = top_indices.cpu().numpy()
 
         recs = []
+        STOP_WORDS = {'the', 'a', 'an', 'in', 'of', 'and', 'to', 'for', 'my', 'is', 'on'}
+
         for idx in top_indices:
-            if len(recs) >= top_k: break # Набрали нужное количество
+            if len(recs) >= top_k: break
+
             row = self.metadata[self.metadata['item_id'] == idx].iloc[0]
             rec_title = str(row['title']).lower()
 
+            # --- УЛУЧШЕННЫЙ ПОИСК КОРНЯ ---
+            # Разбиваем на слова, убирая знаки препинания
+            words = rec_title.replace(':', ' ').replace('-', ' ').split()
+            base_rec = None
+
+            # Ищем первое слово, которое НЕ является стоп-словом и длиннее 2 букв
+            for word in words:
+                if word not in STOP_WORDS and len(word) >= 3:
+                    base_rec = word
+                    break
+
             is_sequel = False
-            for sel_title in selected_titles:
-                # Базовая проверка: если начало названия совпадает (напр. "Shrek" и "Shrek 2")
-                # Берем первые 4-5 символов или первое слово
-                base_sel = sel_title.split(':')[0].split(' ')[0]  # Отсекаем подзаголовки
-                base_rec = rec_title.split(':')[0].split(' ')[0]
-
-                if len(base_sel) > 3 and base_sel == base_rec:
-                    is_sequel = True
-                    break
-
-                # Или если одно название содержится в другом (напр. "Harry Potter" и "Harry Potter...")
-                if base_sel in rec_title or base_rec in sel_title:
-                    is_sequel = True
-                    break
+            if base_rec:
+                for sel_title in selected_titles:
+                    # Если корень (например, "matrix") есть в названии выбранного фильма
+                    if base_rec in sel_title:
+                        is_sequel = True
+                        break
 
             if is_sequel:
-                continue  # Пропускаем этот фильм, идем к следующему в очереди
+                continue
 
             search_query = f"{row['title']} {int(row['year']) if row['year'] else ''}".replace(" ", "+")
             imdb_link = f"https://www.imdb.com/find?q={search_query}"
 
             recs.append({
+                'item_id': int(idx),
                 'title': row['title'],
                 'year': row['year'],
                 'genres': row['genres'],
                 'imdb_url': imdb_link
             })
+
         return recs
 
 
