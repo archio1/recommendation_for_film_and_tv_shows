@@ -1,6 +1,9 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+Colab_Train/
+.pytest_cache/
+
 
 # C extensions
 *.so
@@ -87,3 +90,53 @@ target/
 
 # Mypy cache
 .mypy_cache/
+
+
+#Data and models (the heaviest files)
+data/processed/
+models/*.pt
+models/*.safetensors
+copy/
+.aider*
+
+# Quality-test artifacts (keep reports/.gitkeep, ignore timestamped runs)
+reports/quality_trajectory_*.json
+
+# Generated demo artifacts (large, regenerable HTML visualizations)
+reports/figures/*.html
+reports/figures/old_figures/
+
+# ML artifacts in subdirs (regenerable via scripts)
+*.pt
+*.safetensors
+*.faiss
+*.npy
+src/recommendation_system/faiss_index/
+
+# Everything under models/ is regenerable (weights, tokenizers, archived demos, LoRA experiments)
+models/**
+!models/.gitkeep
+
+# Cache databases
+*.sqlite
+*.sqlite3
+
+# Pipeline outputs (regenerable, files or dirs)
+src/recommendation_system/data/result_check_data
+src/recommendation_system/data/results.txt
+src/recommendation_system/data/results_of_trakt_collector
+src/recommendation_system/models/gnn/result_of_compute_embeddings
+
+# Local backups (NEVER commit)
+copy_project.7z
+*.7z
+*.zip
+*.tar.gz
+
+# Local IDE/agent state
+.claude/
+
+# Internal specs and design notes (only PROJECT_SNAPSHOT is public)
+/spec/*
+!/spec/PROJECT_SNAPSHOT.md
+
