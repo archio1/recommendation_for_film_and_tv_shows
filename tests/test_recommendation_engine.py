@@ -16,7 +16,7 @@ def engine_with_mock_model(mock_metadata):
     # Создаем объект без вызова __init__, чтобы не грузить файлы
     engine = InferenceEngine.__new__(InferenceEngine)
 
-    # Вручную прописываем нужные атрибуты
+    # Вручную прописываем нужные атрибуты(вынести)
     engine.metadata = mock_metadata
     engine.device = 'cpu'
     engine.is_loaded = True
@@ -43,9 +43,9 @@ def test_recommendation_quantity(engine_with_mock_model):
 
     assert len(recs) == 5
 
-
+# запустить модель тест
 def test_exclusion_of_liked_movies(engine_with_mock_model):
-    """Проверяем, что выбранный фильм не попадает в рекомендации"""
+    """Проверяем, что выбранный фильм не попадает в рекомендации,"""
     liked_ids = [0]  # Выбрали Saw
     recs = engine_with_mock_model.get_recommendations(liked_ids, top_k=5)
 
