@@ -78,6 +78,10 @@ target/
 # Jupyter NB Checkpoints
 .ipynb_checkpoints/
 
+# Jupyter notebooks (kept local; outputs bloat repo)
+notebooks/*.ipynb
+!notebooks/.gitkeep
+
 # exclude data from source control by default
 /data/
 
