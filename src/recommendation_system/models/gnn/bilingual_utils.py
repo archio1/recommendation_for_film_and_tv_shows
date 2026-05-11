@@ -6,11 +6,13 @@ import logging
 import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 from difflib import SequenceMatcher
 from functools import lru_cache
 import pandas as pd
 import numpy as np
+from universal_search import ensure_genres, expand_compound_genres
+
 
 # Optional: TMDB API
 try:
@@ -19,7 +21,7 @@ try:
     HAS_REQUESTS = True
 except ImportError:
     HAS_REQUESTS = False
-    print("⚠️ requests not installed. Run: pip install requests")
+    print("requests not installed. Run: pip install requests")
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,11 @@ GENRE_EN_TO_RU = {
     "Documentary": "Документальный",
     "Drama": "Драма",
     "Family": "Семейный",
-    "Fantasy": "Фэнтези",
+    "Fantasy": "Фэнтези", # Теперь GoT будет попадать сюда
     "History": "Исторический",
     "Horror": "Ужасы",
     "Music": "Музыка",
+    "Musical": "Мюзикл",
     "Mystery": "Детектив",
     "Romance": "Мелодрама",
     "Science Fiction": "Научная фантастика",
@@ -48,6 +51,36 @@ GENRE_EN_TO_RU = {
     "TV Movie": "ТВ-фильм",
     "War": "Военный",
     "Western": "Вестерн",
+    "Children": "Детский",
+    # Compound TMDB tags are now expanded BEFORE translation:
+    # "Sci-Fi & Fantasy" → ["Sci-Fi", "Fantasy"] (by expand_compound_genres)
+    # "Action & Adventure" → ["Action", "Adventure"]
+    # So compound entries here are no longer needed.
+}
+
+GENRE_EN_TO_UK = {
+    "Action": "Бойовик",
+    "Adventure": "Пригоди",
+    "Animation": "Мультфільм",
+    "Comedy": "Комедія",
+    "Crime": "Кримінал",
+    "Documentary": "Документальний",
+    "Drama": "Драма",
+    "Family": "Сімейний",
+    "Fantasy": "Фентезі",
+    "History": "Історичний",
+    "Horror": "Жахи",
+    "Music": "Музика",
+    "Musical": "Мюзикл",
+    "Mystery": "Детектив",
+    "Romance": "Мелодрама",
+    "Science Fiction": "Наукова фантастика",
+    "Sci-Fi": "Фантастика",
+    "Thriller": "Трилер",
+    "TV Movie": "Телефільм",
+    "War": "Військовий",
+    "Western": "Вестерн",
+    "Children": "Дитячий",
 }
 
 GENRE_EMOJI = {
@@ -55,8 +88,9 @@ GENRE_EMOJI = {
     "Comedy": "😂", "Crime": "🔫", "Documentary": "📹",
     "Drama": "🎭", "Family": "👨‍👩‍👧‍👦", "Fantasy": "🏰",
     "History": "📜", "Horror": "👻", "Music": "🎵",
-    "Mystery": "🔍", "Romance": "💕", "Science Fiction": "🚀",
-    "Sci-Fi": "🚀", "Thriller": "😱", "War": "⚔️", "Western": "🤠",
+    "Musical": "🎵", "Mystery": "🔍", "Romance": "💕",
+    "Science Fiction": "🚀", "Sci-Fi": "🚀", "Thriller": "😱",
+    "War": "⚔️", "Western": "🤠", "Children": "🧸",
 }
 
 
@@ -78,6 +112,9 @@ class MovieInfo:
     overview_ru: Optional[str] = None
     poster_path: Optional[str] = None
     confidence: float = 1.0
+    title_uk: str = ""
+    overview_uk: Optional[str] = None
+    genres_uk: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -104,45 +141,104 @@ class TMDBTranslationCache:
 
     def _init_db(self):
         """ """
+        # Composite PK (tmdb_id, media_type) — TMDB id-spaces for movies and
+        # TV are independent, so a single INTEGER PRIMARY KEY collides
+        # whenever a movie and a TV show share the same raw tmdb_id (e.g.
+        # movie 1705 = "Battle for the Planet of the Apes", TV 1705 = Fringe).
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='translations'"
+        )
+        table_exists = cursor.fetchone() is not None
+
+        if table_exists:
+            cursor = self.conn.execute("PRAGMA table_info(translations)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if 'media_type' not in columns:
+                # Legacy schema — migrate by copying every row as media_type='movie'.
+                # This preserves the data; TV-side rows that may have been
+                # poisoned by the collision will get rewritten by the next
+                # backfill pass against the (tmdb_id, 'tv') key.
+                self.conn.execute("""
+                    CREATE TABLE translations_new (
+                        tmdb_id INTEGER NOT NULL,
+                        media_type TEXT NOT NULL,
+                        title_ru TEXT,
+                        overview_ru TEXT,
+                        poster_path TEXT,
+                        title_uk TEXT,
+                        overview_uk TEXT,
+                        updated_at INTEGER,
+                        PRIMARY KEY (tmdb_id, media_type)
+                    )
+                """)
+                self.conn.execute("""
+                    INSERT INTO translations_new
+                        (tmdb_id, media_type, title_ru, overview_ru, poster_path,
+                         title_uk, overview_uk, updated_at)
+                    SELECT tmdb_id, 'movie', title_ru, overview_ru, poster_path,
+                           title_uk, overview_uk, updated_at
+                    FROM translations
+                """)
+                self.conn.execute("DROP TABLE translations")
+                self.conn.execute("ALTER TABLE translations_new RENAME TO translations")
+        else:
+            self.conn.execute("""
+                CREATE TABLE translations (
+                    tmdb_id INTEGER NOT NULL,
+                    media_type TEXT NOT NULL,
+                    title_ru TEXT,
+                    overview_ru TEXT,
+                    poster_path TEXT,
+                    title_uk TEXT,
+                    overview_uk TEXT,
+                    updated_at INTEGER,
+                    PRIMARY KEY (tmdb_id, media_type)
+                )
+            """)
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS translations (
-                tmdb_id INTEGER PRIMARY KEY,
-                title_ru TEXT,
-                overview_ru TEXT,
-                poster_path TEXT,
-                updated_at INTEGER
-            )
-        """)
-        self.conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_updated 
+            CREATE INDEX IF NOT EXISTS idx_updated
             ON translations(updated_at)
         """)
         self.conn.commit()
 
-    def get(self, tmdb_id: int) -> Optional[Dict]:
+    def get(self, tmdb_id: int, media_type: str) -> Optional[Dict]:
         """ """
         cursor = self.conn.execute(
-            "SELECT title_ru, overview_ru, poster_path FROM translations WHERE tmdb_id = ?",
-            (tmdb_id,)
+            "SELECT title_ru, overview_ru, poster_path, title_uk, overview_uk "
+            "FROM translations WHERE tmdb_id = ? AND media_type = ?",
+            (tmdb_id, media_type)
         )
         row = cursor.fetchone()
         if row:
             return {
                 'title_ru': row[0],
                 'overview_ru': row[1],
-                'poster_path': row[2]
+                'poster_path': row[2],
+                'title_uk': row[3],
+                'overview_uk': row[4],
             }
         return None
 
-    def get_batch(self, tmdb_ids: List[int]) -> Dict[int, Dict]:
-        """ """
+    def get_batch(
+        self,
+        tmdb_ids: List[int],
+        media_type: str,
+    ) -> Dict[int, Dict]:
+        """Bulk lookup for one media_type (movie or tv).
+
+        media_type is required — without it movie/tv rows with the same raw
+        tmdb_id can no longer be distinguished and the whole point of the
+        composite PK collapses. Callers that need to mix domains should call
+        this twice (once per type).
+        """
         if not tmdb_ids:
             return {}
 
         placeholders = ','.join('?' * len(tmdb_ids))
         cursor = self.conn.execute(
-            f"SELECT tmdb_id, title_ru, overview_ru, poster_path FROM translations WHERE tmdb_id IN ({placeholders})",
-            tmdb_ids
+            f"SELECT tmdb_id, title_ru, overview_ru, poster_path, title_uk, overview_uk "
+            f"FROM translations WHERE media_type = ? AND tmdb_id IN ({placeholders})",
+            [media_type, *tmdb_ids]
         )
 
         result = {}
@@ -150,26 +246,111 @@ class TMDBTranslationCache:
             result[row[0]] = {
                 'title_ru': row[1],
                 'overview_ru': row[2],
-                'poster_path': row[3]
+                'poster_path': row[3],
+                'title_uk': row[4],
+                'overview_uk': row[5],
             }
         return result
 
-    def set(self, tmdb_id: int, title_ru: str, overview_ru: str = None, poster_path: str = None):
+    def set(
+        self,
+        tmdb_id: int,
+        media_type: str,
+        title_ru: str,
+        overview_ru: str = None,
+        poster_path: str = None,
+    ):
         """ """
         self.conn.execute("""
-            INSERT OR REPLACE INTO translations (tmdb_id, title_ru, overview_ru, poster_path, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (tmdb_id, title_ru, overview_ru, poster_path, int(time.time())))
+            INSERT OR REPLACE INTO translations
+                (tmdb_id, media_type, title_ru, overview_ru, poster_path, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (tmdb_id, media_type, title_ru, overview_ru, poster_path, int(time.time())))
         self.conn.commit()
 
-    def set_batch(self, translations: List[Tuple[int, str, str, str]]):
-        """ """
+    def set_batch(
+        self,
+        translations: List[Tuple[int, str, str, str, str]],
+    ):
+        """Each tuple: (tmdb_id, media_type, title_ru, overview_ru, poster_path)."""
+        now = int(time.time())
+        data = [(t[0], t[1], t[2], t[3], t[4], now) for t in translations]
+        self.conn.executemany("""
+            INSERT OR REPLACE INTO translations
+                (tmdb_id, media_type, title_ru, overview_ru, poster_path, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, data)
+        self.conn.commit()
+
+    def set_ru(
+        self,
+        tmdb_id: int,
+        media_type: str,
+        title_ru: str,
+        overview_ru: Optional[str] = None,
+    ) -> None:
+        """Upsert just the ru columns without touching uk / poster_path.
+
+        `set` uses INSERT OR REPLACE which clobbers any uk row written
+        earlier; the ru backfill must not lose UK data, so it goes through
+        this UPSERT path the same way set_uk does for the mirror case.
+        """
+        self.conn.execute(
+            """
+            INSERT INTO translations (tmdb_id, media_type, title_ru, overview_ru, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(tmdb_id, media_type) DO UPDATE SET
+                title_ru = excluded.title_ru,
+                overview_ru = excluded.overview_ru,
+                updated_at = excluded.updated_at
+            """,
+            (tmdb_id, media_type, title_ru, overview_ru, int(time.time())),
+        )
+        self.conn.commit()
+
+    def set_uk(
+        self,
+        tmdb_id: int,
+        media_type: str,
+        title_uk: str,
+        overview_uk: Optional[str] = None,
+    ) -> None:
+        """Upsert just the uk columns without touching the ru ones.
+
+        Used by the uk backfill script and the TMDB uk-fetch path so a
+        first-time uk write doesn't blank existing ru data on the row.
+        """
+        self.conn.execute(
+            """
+            INSERT INTO translations (tmdb_id, media_type, title_uk, overview_uk, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(tmdb_id, media_type) DO UPDATE SET
+                title_uk = excluded.title_uk,
+                overview_uk = excluded.overview_uk,
+                updated_at = excluded.updated_at
+            """,
+            (tmdb_id, media_type, title_uk, overview_uk, int(time.time())),
+        )
+        self.conn.commit()
+
+    def set_uk_batch(
+        self,
+        translations: List[Tuple[int, str, str, Optional[str]]],
+    ) -> None:
+        """Each tuple: (tmdb_id, media_type, title_uk, overview_uk)."""
         now = int(time.time())
         data = [(t[0], t[1], t[2], t[3], now) for t in translations]
-        self.conn.executemany("""
-            INSERT OR REPLACE INTO translations (tmdb_id, title_ru, overview_ru, poster_path, updated_at)
+        self.conn.executemany(
+            """
+            INSERT INTO translations (tmdb_id, media_type, title_uk, overview_uk, updated_at)
             VALUES (?, ?, ?, ?, ?)
-        """, data)
+            ON CONFLICT(tmdb_id, media_type) DO UPDATE SET
+                title_uk = excluded.title_uk,
+                overview_uk = excluded.overview_uk,
+                updated_at = excluded.updated_at
+            """,
+            data,
+        )
         self.conn.commit()
 
     def stats(self) -> Dict:
@@ -227,7 +408,7 @@ class TMDBClient:
             {'title_ru': '...', 'overview_ru': '...', 'poster_path': '...'} або None
         """
         # 1. Спочатку перевіряємо кеш
-        cached = self.cache.get(tmdb_id)
+        cached = self.cache.get(tmdb_id, media_type)
         if cached:
             return cached
 
@@ -256,6 +437,7 @@ class TMDBClient:
 
                 self.cache.set(
                     tmdb_id,
+                    media_type,
                     result['title_ru'],
                     result['overview_ru'],
                     result['poster_path']
@@ -264,7 +446,7 @@ class TMDBClient:
                 return result
 
             elif response.status_code == 404:
-                self.cache.set(tmdb_id, '', '', '')
+                self.cache.set(tmdb_id, media_type, '', '', '')
                 return None
 
             else:
@@ -273,6 +455,110 @@ class TMDBClient:
 
         except Exception as e:
             logger.error(f"TMDB API exception: {e}")
+            return None
+
+    def get_russian_translation(
+        self, tmdb_id: int, media_type: str = 'movie'
+    ) -> Optional[Dict]:
+        """Fetch Russian title/overview for one tmdb_id.
+
+        Mirrors get_ukrainian_translation but with language='ru-RU' and
+        writes only the ru columns via cache.set_ru — so calling this does
+        not clobber uk data already stored on the row.
+
+        Note: get_movie_translation (legacy) returns the cached row as-is,
+        which after the uk backfill means title_ru=NULL hits the cache and
+        TMDB is never called. This method only treats the row as cached
+        when title_ru itself has been populated.
+        """
+        cached = self.cache.get(tmdb_id, media_type)
+        if cached and (cached.get('title_ru') is not None):
+            return {
+                'title_ru': cached.get('title_ru') or '',
+                'overview_ru': cached.get('overview_ru') or '',
+            }
+
+        if not self.session:
+            return None
+
+        self._rate_limit()
+
+        try:
+            url = f"{self.BASE_URL}/{media_type}/{tmdb_id}"
+            params = {'api_key': self.api_key, 'language': 'ru-RU'}
+            response = self.session.get(url, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                title_ru = data.get('title') or data.get('name', '') or ''
+                overview_ru = data.get('overview', '') or ''
+                self.cache.set_ru(tmdb_id, media_type, title_ru, overview_ru)
+                return {'title_ru': title_ru, 'overview_ru': overview_ru}
+
+            if response.status_code == 404:
+                self.cache.set_ru(tmdb_id, media_type, '', '')
+                return {'title_ru': '', 'overview_ru': ''}
+
+            logger.warning(
+                f"TMDB ru API error {response.status_code} for {tmdb_id}"
+            )
+            return None
+
+        except Exception as e:
+            logger.error(f"TMDB ru API exception for {tmdb_id}: {e}")
+            return None
+
+    def get_ukrainian_translation(
+        self, tmdb_id: int, media_type: str = 'movie'
+    ) -> Optional[Dict]:
+        """Fetch Ukrainian title/overview for one tmdb_id.
+
+        Mirrors get_movie_translation but with language='uk-UA' and writes
+        only the uk columns via cache.set_uk — so calling this does not
+        clobber an existing ru row.
+
+        Returns dict with 'title_uk', 'overview_uk' or None on hard failure.
+        Empty/missing uk on TMDB returns dict with empty strings (cached as
+        a negative result so we don't hit TMDB again on the next pass).
+        """
+        cached = self.cache.get(tmdb_id, media_type)
+        if cached and (cached.get('title_uk') is not None):
+            return {
+                'title_uk': cached.get('title_uk') or '',
+                'overview_uk': cached.get('overview_uk') or '',
+            }
+
+        if not self.session:
+            return None
+
+        self._rate_limit()
+
+        try:
+            url = f"{self.BASE_URL}/{media_type}/{tmdb_id}"
+            params = {'api_key': self.api_key, 'language': 'uk-UA'}
+            response = self.session.get(url, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                title_uk = data.get('title') or data.get('name', '') or ''
+                overview_uk = data.get('overview', '') or ''
+                # If TMDB returned uk-locale content that's actually English
+                # (no uk translation available), it leaks through as the
+                # original title. We still cache as empty to mark "checked".
+                self.cache.set_uk(tmdb_id, media_type, title_uk, overview_uk)
+                return {'title_uk': title_uk, 'overview_uk': overview_uk}
+
+            if response.status_code == 404:
+                self.cache.set_uk(tmdb_id, media_type, '', '')
+                return {'title_uk': '', 'overview_uk': ''}
+
+            logger.warning(
+                f"TMDB uk API error {response.status_code} for {tmdb_id}"
+            )
+            return None
+
+        except Exception as e:
+            logger.error(f"TMDB uk API exception for {tmdb_id}: {e}")
             return None
 
     def prefetch_translations(
@@ -284,10 +570,19 @@ class TMDBClient:
         if media_types is None:
             media_types = ['movie'] * len(tmdb_ids)
 
-        cached = self.cache.get_batch(tmdb_ids)
-        to_fetch = [(id_, mt) for id_, mt in zip(tmdb_ids, media_types) if id_ not in cached]
+        movie_ids = [id_ for id_, mt in zip(tmdb_ids, media_types) if mt == 'movie']
+        tv_ids = [id_ for id_, mt in zip(tmdb_ids, media_types) if mt == 'tv']
+        cached_movie = self.cache.get_batch(movie_ids, 'movie') if movie_ids else {}
+        cached_tv = self.cache.get_batch(tv_ids, 'tv') if tv_ids else {}
+        to_fetch = [
+            (id_, mt) for id_, mt in zip(tmdb_ids, media_types)
+            if (mt == 'movie' and id_ not in cached_movie)
+            or (mt == 'tv' and id_ not in cached_tv)
+            or mt not in ('movie', 'tv')
+        ]
+        cached_total = len(cached_movie) + len(cached_tv)
 
-        logger.info(f"Prefetch: {len(to_fetch)} нових з {len(tmdb_ids)} (в кеші: {len(cached)})")
+        logger.info(f"Prefetch: {len(to_fetch)} нових з {len(tmdb_ids)} (в кеші: {cached_total})")
 
         fetched = 0
         for i, (tmdb_id, media_type) in enumerate(to_fetch):
@@ -390,7 +685,7 @@ class ScalableMovieIntelligence:
         media_type = 'tv' if row.get('type') == 'tv' else 'movie'
 
         if pd.notna(tmdb_id):
-            cached = self.cache.get(int(tmdb_id))
+            cached = self.cache.get(int(tmdb_id), media_type)
             if cached and cached.get('title_ru'):
                 return cached['title_ru']
 
@@ -440,9 +735,28 @@ class ScalableMovieIntelligence:
         query_lower = self._normalize_text(query)
         results = []
 
-        all_tmdb_ids = list(self.tmdb_to_item.keys())
+        # Partition known tmdb_ids by media_type so the per-domain composite
+        # PK lookup hits the right rows. We then merge — collisions across
+        # types can no longer happen because each row is keyed by both.
+        movie_ids: List[int] = []
+        tv_ids: List[int] = []
+        if 'type' in self.metadata.columns and 'tmdb_id' in self.metadata.columns:
+            for _, row in self.metadata[['tmdb_id', 'type']].dropna(subset=['tmdb_id']).iterrows():
+                tmdb_id = int(row['tmdb_id'])
+                if tmdb_id not in self.tmdb_to_item:
+                    continue
+                if str(row['type']) == 'tv':
+                    tv_ids.append(tmdb_id)
+                else:
+                    movie_ids.append(tmdb_id)
+        else:
+            movie_ids = list(self.tmdb_to_item.keys())
 
-        cached = self.cache.get_batch(all_tmdb_ids)
+        cached: Dict[int, Dict] = {}
+        if movie_ids:
+            cached.update(self.cache.get_batch(movie_ids, 'movie'))
+        if tv_ids:
+            cached.update(self.cache.get_batch(tv_ids, 'tv'))
 
         for tmdb_id, translation in cached.items():
             title_ru = translation.get('title_ru', '')
@@ -493,8 +807,11 @@ class ScalableMovieIntelligence:
 
         return SearchResult(query=query, matches=results, error=error)
 
-    def get_movie_info(self, item_id: int) -> Optional[MovieInfo]:
-        """ """
+    def get_movie_info(self, item_id: int):
+        """
+        Fixed version: uses ensure_genres() for reliable genre parsing.
+        Replaces the old ad-hoc ast.literal_eval / string splitting approach.
+        """
         row = self.metadata[self.metadata['item_id'] == item_id]
         if len(row) == 0:
             return None
@@ -505,35 +822,23 @@ class ScalableMovieIntelligence:
         year = int(row.get('year', 2000))
         tmdb_id = row.get('tmdb_id')
 
-        # Genres
-        genres = row.get('genres', [])
-        if isinstance(genres, str):
-            # Если это строка типа "['Action', 'Horror']" или "Action, Horror"
-            if '[' in genres:
-                try:
-                    import ast
-                    genres = ast.literal_eval(genres)
-                except:
-                    genres = []
-            else:
-                genres = [g.strip() for g in genres.split(',') if g.strip()]
-
-        if not isinstance(genres, (list, np.ndarray)):
-            genres = []
-
-        # Убираем возможные пустые значения
-        genres = [g for g in genres if g and str(g).lower() != 'nan']
+        # ---- GENRE FIX: single source of truth ----
+        # Before: 15 lines of fragile ad-hoc parsing
+        # After:  1 line + expand compounds
+        from universal_search import ensure_genres, expand_compound_genres
+        genres = ensure_genres(row.get('genres', []))
 
         # Russian title
         title_ru = self._get_russian_title(item_id)
 
-        # Russian genres
+        # Russian genres (compounds already expanded by ensure_genres)
         genres_ru = [GENRE_EN_TO_RU.get(g, g) for g in genres]
 
         # Overview
         overview_ru = None
         if pd.notna(tmdb_id):
-            cached = self.cache.get(int(tmdb_id))
+            media_type = 'tv' if row.get('type') == 'tv' else 'movie'
+            cached = self.cache.get(int(tmdb_id), media_type)
             if cached:
                 overview_ru = cached.get('overview_ru')
 
@@ -549,13 +854,15 @@ class ScalableMovieIntelligence:
         )
 
     def format_genres_bilingual(self, genres_en: List[str]) -> str:
-        """ """
-        genres_ru = [GENRE_EN_TO_RU.get(g, g) for g in genres_en]
-        return f"{', '.join(genres_en)} — {', '.join(genres_ru)}"
+        """Format genres bilingually, expanding compound tags first."""
+        expanded = expand_compound_genres(genres_en)
+        genres_ru = [GENRE_EN_TO_RU.get(g, g) for g in expanded]
+        return f"{', '.join(expanded)} — {', '.join(genres_ru)}"
 
     def get_genre_emojis(self, genres: List[str]) -> str:
-        """ """
-        emojis = [GENRE_EMOJI.get(g, '') for g in genres[:3] if g in GENRE_EMOJI]
+        """Get emoji string for genres, expanding compound TMDB tags first."""
+        expanded = expand_compound_genres(genres)
+        emojis = [GENRE_EMOJI.get(g, '') for g in expanded[:5] if g in GENRE_EMOJI]
         return ''.join(emojis) if emojis else "🎬"
 
     def prefetch_all_translations(self, progress_callback=None):
