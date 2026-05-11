@@ -3,7 +3,7 @@ requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "recommendation_for_film_and_tv_shows"
+name = "recommendation-system"
 version = "0.1.0"
 description = "A recommendation system using LightGCN and TMDB dataset with Llama integration"
 authors = [
@@ -21,8 +21,11 @@ requires-python = ">=3.10"
 #    "Topic :: Software Development :: Machine Learning",
 #]
 dependencies = [
+    "faiss-cpu==1.13.2",
     "matplotlib",
     "pandas",
+    "plotly>=6.5.0",
+    "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
 ]
 
@@ -37,15 +40,28 @@ dev = [
 #Issues = "https://github.com/yourusername/recommendation-for_film_and_tv_shows/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/recommendation-for-film-and-tv_shows"]
+packages = ["src/recommendation_system"]
 
 #[tool.ruff]
 #line-length = 88
 #select = ["E", "F", "W", "I"]
 
-#[tool.pytest.ini_options]
-#minversion = "6.0"
-#addopts = "-ra -q"
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+    "slow: tests that load real SBERT or hit external services (run with -m slow)",
+    "needs_real_models: tests that require trained checkpoints + parquet on disk",
+    "quality: trajectory and quality-metric tests that emit JSON reports",
+    "golden: must-contain-ids recall tests (Golden Standard)",
+    "media_dna: TMDB keyword overlap tests (Media DNA)",
+    "popularity: popularity-bias detection tests (top-10% by vote_count)",
+    "graph_overlap: LightGCN graph-neighbor prediction tests",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(levelname)s %(name)s: %(message)s"
 
 #[tool.tox]
 #requires = ["tox>=4.19"]
