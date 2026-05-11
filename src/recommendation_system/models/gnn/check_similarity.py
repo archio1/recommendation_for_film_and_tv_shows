@@ -10,29 +10,43 @@ from lightgcn import LightGCN
 # --- НАСТРОЙКИ ---
 BASE_DIR = Path(__file__).resolve().parents[4]
 DATA_DIR = BASE_DIR / 'data' / 'processed'
-MODEL_PATH = BASE_DIR / 'models' / 'lightgcn_best_v3.pt'
+MODEL_PATH = BASE_DIR / 'models' / 'lightgcn_best_v4.pt'
 
 
-def prepare_content_features_for_inference(metadata, device):
+def prepare_content_features_for_inference(metadata, device, expected_num_genres):
     """Подготовка фичей для inference (без обучения)"""
     metadata = metadata.sort_values('item_id')
 
     # Собираем все жанры
-    all_genres = set()
+    all_genres_in_data = set()
     for gs in metadata['genres']:
         if isinstance(gs, (list, np.ndarray)):
-            all_genres.update(gs)
-    genre_list = sorted(list(all_genres))
+            all_genres_in_data.update(gs)
+
+    # Сортируем по алфавиту (как при обучении)
+    genre_list = sorted(list(all_genres_in_data))
+
+    # 2. Подгоняем список под размер модели (expected_num_genres)
+    if len(genre_list) > expected_num_genres:
+        # Если жанров в данных больше, берем только первые N, на которых училась модель
+        genre_list = genre_list[:expected_num_genres]
+    elif len(genre_list) < expected_num_genres:
+        # Если меньше, дополняем пустышками
+        genre_list = genre_list + [f"dummy_{i}" for i in range(expected_num_genres - len(genre_list))]
+
     genre_map = {g: i for i, g in enumerate(genre_list)}
 
+    print(f"  ✅ Жанры синхронизированы: {len(genre_list)} шт.")
+
     # Genre matrix
-    genre_matrix = torch.zeros((len(metadata), len(genre_list)), device=device)
+    genre_matrix = torch.zeros((len(metadata), expected_num_genres), device=device)
     for idx, row in metadata.iterrows():
         item_id = row['item_id']
         if item_id >= len(metadata):
             continue
         gs = row['genres']
         if isinstance(gs, (list, np.ndarray)):
+            # Берем только те жанры, которые попали в наш синхронизированный список
             indices = [genre_map[g] for g in gs if g in genre_map]
             if indices:
                 genre_matrix[item_id, indices] = 1.0
@@ -44,44 +58,45 @@ def prepare_content_features_for_inference(metadata, device):
     years_normalized = (years - year_mean) / year_std
     year_tensor = torch.tensor(years_normalized, dtype=torch.float32, device=device).view(-1, 1)
 
-    return (genre_matrix, year_tensor), len(genre_list)
+    return (genre_matrix, year_tensor)
 
 
 def load_resources():
     print(f"📂 Загрузка данных из: {DATA_DIR}")
 
-    # 1. Метаданные
-    metadata = pd.read_parquet(DATA_DIR / 'items_metadata_final.parquet')
-
-    # 2. Загрузка чекпоинта
+    # 1. Загрузка чекпоинта ПЕРВЫМ делом, чтобы узнать размеры
     print(f"🧠 Загрузка модели: {MODEL_PATH.name}...")
     checkpoint = torch.load(MODEL_PATH, map_location='cpu', weights_only=False)
     state_dict = checkpoint['model_state_dict']
 
-    # --- АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ ПАРАМЕТРОВ ---
+    # ОПРЕДЕЛЯЕМ ПАРАМЕТРЫ ИЗ МОДЕЛИ
     num_users = state_dict['user_embedding.weight'].shape[0]
     embedding_dim = state_dict['user_embedding.weight'].shape[1]
 
     if 'item_id_embedding.weight' in state_dict:
-        num_items = state_dict['item_id_embedding.weight'].shape[0]
+        model_num_items = state_dict['item_id_embedding.weight'].shape[0]
     else:
-        num_items = state_dict['item_embedding.weight'].shape[0]
+        model_num_items = state_dict['item_embedding.weight'].shape[0]
 
-    # Определение количества жанров
     num_genres = 0
     if 'genre_encoder.weight' in state_dict:
         num_genres = state_dict['genre_encoder.weight'].shape[1]
 
-    # Проверяем наличие layer_weights
     use_layer_weights = 'layer_weights' in state_dict
 
-    print(f"   ⚙️ Параметры: Users={num_users}, Items={num_items}, Dim={embedding_dim}, Genres={num_genres}")
-    print(f"   ⚙️ Layer weights: {use_layer_weights}")
+    print(f"  ⚙️ Модель обучена на: Users={num_users}, Items={model_num_items}, Genres={num_genres}")
+
+    # 2. Метаданные (ФИЛЬТРУЕМ ПОД РАЗМЕР МОДЕЛИ)
+    full_metadata = pd.read_parquet(DATA_DIR / 'items_metadata_final.parquet')
+
+    # Оставляем только те айтемы, которые знает нейросеть
+    metadata = full_metadata[full_metadata['item_id'] < model_num_items].copy()
+    print(f"  📊 Метаданные обрезаны до {len(metadata)} записей (только trained айтемы)")
 
     # Создаем модель
     model = LightGCN(
         num_users=num_users,
-        num_items=num_items,
+        num_items=model_num_items,
         num_genres=num_genres,
         embedding_dim=embedding_dim,
         use_layer_weights=use_layer_weights
@@ -90,9 +105,9 @@ def load_resources():
     model.load_state_dict(state_dict)
     model.eval()
 
-    # Подготовка фичей
-    device = 'cpu'  # Для inference достаточно CPU
-    item_features, _ = prepare_content_features_for_inference(metadata, device)
+    # Подготовка фичей только для известных модели айтемов
+    device = 'cpu'
+    item_features = prepare_content_features_for_inference(metadata, device, num_genres)
 
     return model, metadata, item_features
 

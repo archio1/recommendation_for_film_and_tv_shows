@@ -1,0 +1,33 @@
+{
+  "genre_mapping": {
+    "Action & Adventure": ["Action", "Adventure"],
+    "Sci-Fi & Fantasy": ["Sci-Fi", "Fantasy"],
+    "War & Politics": "War",
+    "Soap": "Drama",
+    "Reality": "Documentary",
+    "Talk": "Comedy",
+    "Kids": "Children",
+    "News": "Documentary",
+    "Science Fiction": "Sci-Fi",
+    "TV Movie": "Drama",
+    "History": "Drama",
+    "Family": "Children",
+    "Music": "Musical",
+    "Action": "Action",
+    "Adventure": "Adventure",
+    "Animation": "Animation",
+    "Comedy": "Comedy",
+    "Crime": "Crime",
+    "Documentary": "Documentary",
+    "Drama": "Drama",
+    "Fantasy": "Fantasy",
+    "Horror": "Horror",
+    "Mystery": "Mystery",
+    "Romance": "Romance",
+    "Thriller": "Thriller",
+    "War": "War",
+    "Western": "Western"
+  },
+  "movie_columns": ["id", "title", "release_date", "genres", "popularity", "vote_average"],
+  "tv_columns": ["id", "name", "first_air_date", "genres", "popularity", "vote_average"]
+}

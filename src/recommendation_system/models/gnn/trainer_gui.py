@@ -32,84 +32,97 @@ class InferenceEngine:
         self.item_features = None  # Для гибридной модели
         self.is_loaded = False
 
-    def _prepare_features(self):
-        """Подготовка признаков (Жанры + Годы) для инференса"""
+    def _prepare_features(self, expected_genres):
+        """Подготовка фичей, строго подогнанная под размер весов модели"""
         df = self.metadata.sort_values('item_id')
 
-        # 1. Жанры (Multi-Hot)
-        # Получаем список всех уникальных жанров
-        all_genres = set()
+        all_genres_in_data = set()
         for genres in df['genres']:
             if isinstance(genres, (list, np.ndarray)):
-                all_genres.update(genres)
+                all_genres_in_data.update(genres)
 
-        genre_list = sorted(list(all_genres))
-        genre_map = {g: i for i, g in enumerate(genre_list)}
-        num_genres = len(genre_list)
+        sorted_genres = sorted(list(all_genres_in_data))
+        # Обрезаем/дополняем список жанров под модель
+        final_genres = sorted_genres[:expected_genres]
+        if len(final_genres) < expected_genres:
+            final_genres += [f"dummy_{i}" for i in range(expected_genres - len(final_genres))]
 
-        # Создаем матрицу [num_items, num_genres]
-        genre_matrix = torch.zeros((len(df), num_genres), device=self.device)
+        genre_map = {g: i for i, g in enumerate(final_genres)}
 
+        genre_matrix = torch.zeros((len(df), expected_genres), device=self.device)
         for idx, row in df.iterrows():
             item_id = row['item_id']
+            # Проверка, чтобы не выйти за границы clipped метаданных
             if item_id >= len(df): continue
-
             gs = row['genres']
             if isinstance(gs, (list, np.ndarray)):
                 indices = [genre_map[g] for g in gs if g in genre_map]
                 if indices:
                     genre_matrix[item_id, indices] = 1.0
 
-        # 2. Годы (Нормализация)
+        # Годы
         years = df['year'].fillna(2000).values
-        years = (years - 1990) / 30.0  # Примерная нормализация (-2..+1)
-        year_tensor = torch.tensor(years, dtype=torch.float32, device=self.device).view(-1, 1)
+        years_norm = (years - 1990) / 30.0
+        year_tensor = torch.tensor(years_norm, dtype=torch.float32, device=self.device).view(-1, 1)
 
-        return (genre_matrix, year_tensor), num_genres
+        return (genre_matrix, year_tensor), expected_genres
 
     def load_resources(self):
         try:
             with open(self.data_dir / 'id_mapping.json', 'r') as f:
                 self.id_mapping = json.load(f)
 
-            self.metadata = pd.read_parquet(self.data_dir / 'items_metadata_final.parquet')
+            # 1. Загружаем ВСЕ метаданные
+            full_metadata = pd.read_parquet(self.data_dir / 'items_metadata_final.parquet')
 
-            # Загрузка весов
+            # 2. Загрузка весов модели
             checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
             state_dict = checkpoint['model_state_dict']
 
-            # --- АВТООПРЕДЕЛЕНИЕ ПАРАМЕТРОВ ---
+            # Узнаем размер модели (сколько айтемов она поддерживает)
+            if 'item_id_embedding.weight' in state_dict:
+                model_num_items = state_dict['item_id_embedding.weight'].shape[0]
+            else:
+                model_num_items = state_dict['item_embedding.weight'].shape[0]
+
+            # !!! КРИТИЧЕСКИЙ ФИКС !!!
+            # Оставляем в InferenceEngine только те записи, которые есть в весах модели
+            self.metadata = full_metadata[full_metadata['item_id'] < model_num_items].copy()
+            print(f"📊 InferenceEngine: метаданные ограничены до {model_num_items} (trained items)")
+            self.is_loaded = True
+
             embedding_dim = state_dict['user_embedding.weight'].shape[1]
             num_users = state_dict['user_embedding.weight'].shape[0]
-            num_items = state_dict['item_id_embedding.weight'].shape[0] if 'item_id_embedding.weight' in state_dict else \
-            state_dict['item_embedding.weight'].shape[0]
 
-            # Определяем количество слоев по весам alpha
-            num_layers = 2  # по умолчанию
-            if 'alpha' in state_dict:
-                num_layers = state_dict['alpha'].shape[0] - 1
-                print(f"Detected {num_layers} layers from model file.")
+            # Определяем количество жанров по весам
+            num_genres = state_dict['genre_encoder.weight'].shape[1]
 
-            # Подготовка фичей
-            self.item_features, num_genres = self._prepare_features()
+            # Определяем слои
+            num_layers = 2
+            if 'layer_weights' in state_dict:
+                num_layers = state_dict['layer_weights'].shape[0] - 1
 
-            # Инициализация модели v3
+            # Подготовка фичей только для этих айтемов
+            self.item_features, _ = self._prepare_features(num_genres)
+
+            # Инициализация модели
             self.model = LightGCN(
                 num_users=num_users,
-                num_items=num_items,
+                num_items=model_num_items,
                 num_genres=num_genres,
                 embedding_dim=embedding_dim,
                 num_layers=num_layers
             )
 
-            # Загружаем веса (убедись, что lightgcn.py в папке GUI такой же как в Colab!)
             self.model.load_state_dict(state_dict)
             self.model.to(self.device)
             self.model.eval()
 
             self.is_loaded = True
-            return True, f"Модель v3 ({num_layers} layers) загружена"
+            version = self.model_path.stem.split('_')[-1]
+            return True, f"Модель {version} ({num_layers} layers) загружена"
         except Exception as e:
+            print(traceback.format_exc())
             return False, f"Ошибка загрузки: {e}"
 
     def search_movies(self, query: str, limit=5):
