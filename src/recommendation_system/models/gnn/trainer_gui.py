@@ -1,1119 +1,2779 @@
-import flet as ft
-import threading
-import time
-from pathlib import Path
-import sys
-import queue
-import json
+"""
+trainer_gui.py — Flet desktop GUI for the dual-LightGCN stack.
+
+Four tabs share two global controls (Domain switcher, Device selector):
+
+    1. Обучение           — wraps trainer.main() with hyperparameter UI (A2.2 — done)
+    2. Создание датасета  — wraps make_dataset.build_*_dataset() (A2.4 — pending)
+    3. Тестирование       — DualDomainEngine + UniversalSearchEngine (A2.5 — pending)
+    4. Данные             — readonly per-domain statistics (A2.3 — pending)
+"""
+
+from __future__ import annotations
+
 import asyncio
-import torch
+import json
+import logging
+import os
+import queue
+import threading
 import traceback
-import pandas as pd
-import numpy as np
-import torch.nn.functional as F
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
-sys.path.append(str(Path(__file__).parent))
-from trainer import LightGCNTrainer
-from lightgcn import LightGCN, BPRLoss
-from graph_builder import MovieGraphBuilder
+import flet as ft
+import torch
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
-# ==============================================================================
-# ЛОГИКА ПРЕДСКАЗАНИЯ (INFERENCE ENGINE)
-# ==============================================================================
-class InferenceEngine:
-    def __init__(self, data_dir: Path, model_path: Path, device='cpu'):
-        self.data_dir = data_dir
-        self.model_path = model_path
-        self.device = device
-        self.model = None
-        self.metadata = None
-        self.id_mapping = None
-        self.item_features = None  # Для гибридной модели
-        self.is_loaded = False
-
-    def _prepare_features(self, expected_genres):
-        """Подготовка фичей, строго подогнанная под размер весов модели"""
-        df = self.metadata.sort_values('item_id')
-
-        all_genres_in_data = set()
-        for genres in df['genres']:
-            if isinstance(genres, (list, np.ndarray)):
-                all_genres_in_data.update(genres)
-
-        sorted_genres = sorted(list(all_genres_in_data))
-        # Обрезаем/дополняем список жанров под модель
-        final_genres = sorted_genres[:expected_genres]
-        if len(final_genres) < expected_genres:
-            final_genres += [f"dummy_{i}" for i in range(expected_genres - len(final_genres))]
-
-        genre_map = {g: i for i, g in enumerate(final_genres)}
-
-        genre_matrix = torch.zeros((len(df), expected_genres), device=self.device)
-        for idx, row in df.iterrows():
-            item_id = row['item_id']
-            # Проверка, чтобы не выйти за границы clipped метаданных
-            if item_id >= len(df): continue
-            gs = row['genres']
-            if isinstance(gs, (list, np.ndarray)):
-                indices = [genre_map[g] for g in gs if g in genre_map]
-                if indices:
-                    genre_matrix[item_id, indices] = 1.0
-
-        # Годы
-        years = df['year'].fillna(2000).values
-        years_norm = (years - 1990) / 30.0
-        year_tensor = torch.tensor(years_norm, dtype=torch.float32, device=self.device).view(-1, 1)
-
-        return (genre_matrix, year_tensor), expected_genres
-
-    def load_resources(self):
-        try:
-            with open(self.data_dir / 'id_mapping.json', 'r') as f:
-                self.id_mapping = json.load(f)
-
-            # 1. Загружаем ВСЕ метаданные
-            full_metadata = pd.read_parquet(self.data_dir / 'items_metadata_final.parquet')
-
-            # 2. Загрузка весов модели
-            checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
-            state_dict = checkpoint['model_state_dict']
-
-            # Узнаем размер модели (сколько айтемов она поддерживает)
-            if 'item_id_embedding.weight' in state_dict:
-                model_num_items = state_dict['item_id_embedding.weight'].shape[0]
-            else:
-                model_num_items = state_dict['item_embedding.weight'].shape[0]
-
-            # !!! КРИТИЧЕСКИЙ ФИКС !!!
-            # Оставляем в InferenceEngine только те записи, которые есть в весах модели
-            self.metadata = full_metadata[full_metadata['item_id'] < model_num_items].copy()
-            print(f"📊 InferenceEngine: метаданные ограничены до {model_num_items} (trained items)")
-            self.is_loaded = True
-
-            embedding_dim = state_dict['user_embedding.weight'].shape[1]
-            num_users = state_dict['user_embedding.weight'].shape[0]
-
-            # Определяем количество жанров по весам
-            num_genres = state_dict['genre_encoder.weight'].shape[1]
-
-            # Определяем слои
-            num_layers = 2
-            if 'layer_weights' in state_dict:
-                num_layers = state_dict['layer_weights'].shape[0] - 1
-
-            # Подготовка фичей только для этих айтемов
-            self.item_features, _ = self._prepare_features(num_genres)
-
-            # Инициализация модели
-            self.model = LightGCN(
-                num_users=num_users,
-                num_items=model_num_items,
-                num_genres=num_genres,
-                embedding_dim=embedding_dim,
-                num_layers=num_layers
-            )
-
-            self.model.load_state_dict(state_dict)
-            self.model.to(self.device)
-            self.model.eval()
-
-            self.is_loaded = True
-            version = self.model_path.stem.split('_')[-1]
-            return True, f"Модель {version} ({num_layers} layers) загружена"
-        except Exception as e:
-            print(traceback.format_exc())
-            return False, f"Ошибка загрузки: {e}"
-
-    def search_movies(self, query: str, limit=5):
-        if not self.is_loaded or not query: return []
-
-        query = query.lower().strip()
-
-        # 1. Находим все совпадения (без ограничения head здесь)
-        mask = self.metadata['title'].str.lower().str.contains(query, na=False)
-        matches = self.metadata[mask].copy()
-
-        if matches.empty:
-            return []
-
-        # 2. СОРТИРОВКА ПО ПОПУЛЯРНОСТИ (Это ключ к успеху)
-        # В твоем датасете должны быть колонки 'vote_count' или 'popularity'
-        if 'vote_count' in matches.columns:
-            matches = matches.sort_values('vote_count', ascending=False)
-        elif 'popularity' in matches.columns:
-            matches = matches.sort_values('popularity', ascending=False)
-
-        # 3. Дополнительный бонус: точные совпадения выше частичных
-        # (Например, чтобы "Seven" было выше, чем "Seven Years in Tibet")
-        matches['exact_match'] = matches['title'].str.lower() == query
-        matches = matches.sort_values(
-            ['exact_match', 'vote_count' if 'vote_count' in matches.columns else 'popularity'],
-            ascending=[False, False])
-
-        return matches.head(limit)[['title', 'year', 'item_id']].to_dict('records')
-
-    def get_recommendations(self, liked_item_ids: list, top_k=8):
-        if not self.is_loaded or not liked_item_ids: return []
-
-        selected_titles = self.metadata[self.metadata['item_id'].isin(liked_item_ids)]['title'].str.lower().tolist()
-        item_emb = self.model.get_item_embedding(self.item_features).detach()
-
-        selected_indices = torch.tensor(liked_item_ids).to(self.device)
-        selected_vectors = item_emb[selected_indices]
-        user_vector = torch.mean(selected_vectors, dim=0).unsqueeze(0)
-
-        user_vector = F.normalize(user_vector, p=2, dim=1)
-        item_emb_norm = F.normalize(item_emb, p=2, dim=1)
-
-        scores = torch.matmul(user_vector, item_emb_norm.t()).squeeze(0)
-        scores[selected_indices] = -float('inf')
-
-        candidate_count = 100
-        top_scores, top_indices = torch.topk(scores, min(candidate_count, len(scores)))
-        top_indices = top_indices.cpu().numpy()
-
-        recs = []
-        STOP_WORDS = {'the', 'a', 'an', 'in', 'of', 'and', 'to', 'for', 'my', 'is', 'on'}
-
-        for idx in top_indices:
-            if len(recs) >= top_k: break
-
-            row = self.metadata[self.metadata['item_id'] == idx].iloc[0]
-            rec_title = str(row['title']).lower()
-
-            # --- УЛУЧШЕННЫЙ ПОИСК КОРНЯ ---
-            # Разбиваем на слова, убирая знаки препинания
-            words = rec_title.replace(':', ' ').replace('-', ' ').split()
-            base_rec = None
-
-            # Ищем первое слово, которое НЕ является стоп-словом и длиннее 2 букв
-            for word in words:
-                if word not in STOP_WORDS and len(word) >= 3:
-                    base_rec = word
-                    break
-
-            is_sequel = False
-            if base_rec:
-                for sel_title in selected_titles:
-                    # Если корень (например, "matrix") есть в названии выбранного фильма
-                    if base_rec in sel_title:
-                        is_sequel = True
-                        break
-
-            if is_sequel:
-                continue
-
-            search_query = f"{row['title']} {int(row['year']) if row['year'] else ''}".replace(" ", "+")
-            imdb_link = f"https://www.imdb.com/find?q={search_query}"
-
-            recs.append({
-                'item_id': int(idx),
-                'title': row['title'],
-                'year': row['year'],
-                'genres': row['genres'],
-                'imdb_url': imdb_link
-            })
-
-        return recs
+COLORS = {
+    "primary": ft.Colors.BLUE_700,
+    "primary_bg": ft.Colors.BLUE_50,
+    "accent": ft.Colors.ORANGE_400,
+    "ok": ft.Colors.GREEN_600,
+    "ok_bg": ft.Colors.GREEN_50,
+    "warn": ft.Colors.AMBER_700,
+    "err": ft.Colors.RED_600,
+    "err_bg": ft.Colors.RED_50,
+    "muted": ft.Colors.GREY_600,
+    "card_border": ft.Colors.GREY_300,
+}
 
 
-class TrainingGUI:
-    def __init__(self, page: ft.Page):
-        self.page = page
-        self.page.title = "🎬 LightGCN — Обучение и Тестирование"
-        self.page.window_width = 1500
-        self.page.window_height = 980
-        self.page.theme_mode = ft.ThemeMode.LIGHT
-        self.page.padding = 20
-        self.page.bgcolor = ft.Colors.with_opacity(0.98, "#F5F7FA")
+# ======================================================================
+# Tab 1 — Training
+# ======================================================================
 
-        # Состояние обучения
-        self.update_queue = queue.Queue()
-        self.is_training = False
-        self.training_thread = None
 
-        # Состояние инференса
-        self.inference_engine = None
-        self.selected_movies = []  # Список dict: {'title':..., 'item_id':...}
+class TrainingTab:
+    """
+    Wraps trainer.main() with a hyperparameter UI + live progress.
+    Reads `domain` and `device` from the parent app on Start (no re-read mid-run).
+    """
 
-        # Данные графиков
-        self.epochs_data = []
-        self.loss_data = []
-        self.recall_data = []
-        self.ndcg_data = []
+    def __init__(self, app: "TrainerGuiApp") -> None:
+        self.app = app
+        self._thread: threading.Thread | None = None
+        self._stop_requested = False
+        self._update_q: queue.Queue = queue.Queue()
+        self._sidecar_path: Path | None = None
+        self._output_path: Path | None = None
+        self._user_overrode_data_dir = False
+        self._build()
 
-        # --- Picker для папки данных ---
-        self.file_picker = ft.FilePicker(on_result=self._on_dir_selected)
-        self.page.overlay.append(self.file_picker)
+    # ---- public ----
 
-        # --- НОВОЕ: Picker для файла модели ---
-        self.model_picker = ft.FilePicker(on_result=self._on_model_file_selected)
-        self.page.overlay.append(self.model_picker)
+    def build(self) -> ft.Control:
+        return self._root
 
-        self._init_controls()
-        self._build_ui()
-        self.page.run_task(self._process_updates)
+    # ---- construction ----
 
-    def _on_dir_selected(self, e: ft.FilePickerResultEvent):
-        if e.path:
-            self.data_path_text.value = e.path
-            self.data_path_text.color = ft.Colors.BLACK
-            self.data_path_icon.name = ft.Icons.FOLDER_OPEN
-            self.data_path_icon.color = ft.Colors.BLUE_600
-            self.page.update()
-
-    def _init_controls(self):
-        # === Вкладка 1: Обучение ===
-        self.data_path_text = ft.Text("Автоопределение (папка проекта)", color=ft.Colors.GREY_500, size=14, expand=True)
-        self.data_path_icon = ft.Icon(ft.Icons.AUTO_MODE, color=ft.Colors.GREY_400)
-        self.btn_select_data = ft.ElevatedButton("Обзор...", icon=ft.Icons.FOLDER,
-                                                 on_click=lambda _: self.file_picker.get_directory_path())
-
-        self.embedding_dim_input = ft.TextField(label="Размерность", value="64", width=150, text_size=14)
-        self.num_layers_input = ft.TextField(label="Слои GCN", value="2", width=150, text_size=14)
-        self.epochs_input = ft.TextField(label="Эпохи", value="30", width=150, text_size=14)
-        self.batch_size_input = ft.TextField(label="Батч", value="4096", width=150, text_size=14)
-        self.lr_input = ft.TextField(label="LR", value="0.0005", width=150, text_size=14)
-
-        self.device_selector = ft.SegmentedButton(
-            selected={"cuda" if torch.cuda.is_available() else "cpu"},
-            allow_multiple_selection=False,
-            segments=[
-                ft.Segment(value="cpu", label=ft.Text("CPU"), icon=ft.Icon(ft.Icons.COMPUTER)),
-                ft.Segment(value="cuda", label=ft.Text("GPU"), icon=ft.Icon(ft.Icons.BOLT),
-                           disabled=not torch.cuda.is_available()),
-            ]
+    def _build(self) -> None:
+        # data_dir picker — произвольная папка (TextField + FilePicker).
+        # Дефолт идёт за domain switcher, пока пользователь не отредактировал поле.
+        default_data_dir = PROJECT_ROOT / "data" / "processed" / self.app.current_domain()
+        self.data_dir_input = ft.TextField(
+            label="Папка с датасетом",
+            value=str(default_data_dir),
+            hint_text=str(PROJECT_ROOT / "data" / "processed" / self.app.current_domain()),
+            width=420,
+            dense=True,
+            on_change=self._on_data_dir_edited,
+        )
+        self.data_dir_picker = ft.FilePicker(on_result=self._on_data_dir_picked)
+        self.data_dir_btn = ft.IconButton(
+            ft.Icons.FOLDER_OPEN,
+            tooltip="Выбрать папку",
+            on_click=lambda _e: self.data_dir_picker.get_directory_path(
+                dialog_title="Папка датасета",
+                initial_directory=str(self._data_dir_initial()),
+            ),
         )
 
-        self.start_button = ft.ElevatedButton("Начать обучение", icon=ft.Icons.ROCKET_LAUNCH,
-                                              on_click=self._start_training,
-                                              style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_600, color=ft.Colors.WHITE),
-                                              height=50)
-        self.stop_button = ft.ElevatedButton("Стоп", icon=ft.Icons.STOP_CIRCLE, on_click=self._stop_training,
-                                             disabled=True,
-                                             style=ft.ButtonStyle(bgcolor=ft.Colors.RED_100, color=ft.Colors.RED_700),
-                                             height=50)
+        # Custom output name — если пусто, отрабатывает auto-bump v{N+1}.
+        self.model_name_input = ft.TextField(
+            label="Имя модели (опц.)",
+            hint_text="Пусто → auto-bump v{N+1}",
+            width=240,
+            text_size=14,
+            dense=True,
+        )
 
-        # Прогресс
-        self.batch_progress_bar = ft.ProgressBar(width=600, height=6, bgcolor=ft.Colors.GREY_200,
-                                                 color=ft.Colors.ORANGE_400, value=0)
-        self.batch_progress_text = ft.Text("Ожидание...", size=12, color=ft.Colors.GREY_600, font_family="Consolas")
-        self.batch_progress_section = ft.Container(
-            content=ft.Column([self.batch_progress_text, self.batch_progress_bar], spacing=5),
-            margin=ft.margin.only(top=10), visible=False)
+        self.epochs_input = _hp_field("Эпохи", "30")
+        self.batch_size_input = _hp_field("Батч", "2048")
+        self.lr_input = _hp_field("LR", "0.002")
+        self.embedding_dim_input = _hp_field("Embedding", "32")
+        self.num_layers_input = _hp_field("Слои GCN", "2")
+        self.patience_input = _hp_field("Patience", "3")
+        self.eval_every_input = _hp_field("Eval every", "5")
 
-        self.progress_bar = ft.ProgressBar(expand=True, color=ft.Colors.BLUE_700, bgcolor=ft.Colors.BLUE_100, height=10,
-                                           border_radius=5)
-        self.progress_text = ft.Text("Готов к работе", size=16, weight=ft.FontWeight.BOLD,
-                                     color=ft.Colors.BLUE_GREY_800)
+        self.start_btn = ft.ElevatedButton(
+            "Старт",
+            icon=ft.Icons.PLAY_ARROW,
+            on_click=self._on_start,
+            bgcolor=COLORS["primary"],
+            color=ft.Colors.WHITE,
+            height=44,
+        )
+        self.stop_btn = ft.ElevatedButton(
+            "Стоп",
+            icon=ft.Icons.STOP_CIRCLE,
+            on_click=self._on_stop,
+            bgcolor=COLORS["err"],
+            color=ft.Colors.WHITE,
+            disabled=True,
+            height=44,
+        )
 
-        # Метрики
-        self.epoch_card = self._metric_card("Эпоха", "0/0", ft.Colors.BLUE_500, ft.Icons.CALENDAR_MONTH)
-        self.loss_card = self._metric_card("Loss", "0.0000", ft.Colors.ORANGE_500, ft.Icons.TRENDING_DOWN)
-        self.recall_card = self._metric_card("Recall@10", "0.0000", ft.Colors.GREEN_500, ft.Icons.STAR)
-        self.ndcg_card = self._metric_card("NDCG@10", "0.0000", ft.Colors.PURPLE_500, ft.Icons.SORT)
-        self.time_card = self._metric_card("Время", "00:00", ft.Colors.CYAN_500, ft.Icons.TIMER)
+        self.status_text = ft.Text("Готов к работе", size=14, color=COLORS["muted"])
+        self.progress_bar = ft.ProgressBar(
+            value=0, color=COLORS["primary"], bgcolor=ft.Colors.GREY_200, height=8
+        )
 
-        self.chart_text = ft.Text("График...", size=12, font_family="Consolas")
-        self.chart_container = ft.Container(content=ft.Column([ft.Text("График", weight="bold"), self.chart_text]),
-                                            bgcolor=ft.Colors.WHITE, padding=15, border_radius=12,
-                                            shadow=ft.BoxShadow(blur_radius=10,
-                                                                color=ft.Colors.with_opacity(0.1, "black")))
+        self.epoch_label = ft.Text("0 / 0", size=20, weight=ft.FontWeight.BOLD)
+        self.best_epoch_label = ft.Text("—", size=20, weight=ft.FontWeight.BOLD)
+        self.loss_label = ft.Text("—", size=20, weight=ft.FontWeight.BOLD)
+        self.recall_label = ft.Text("—", size=20, weight=ft.FontWeight.BOLD)
+        self.ndcg_label = ft.Text("—", size=20, weight=ft.FontWeight.BOLD)
 
-        self.log_list = ft.ListView(spacing=5, padding=10, auto_scroll=True, height=300)
-        self.log_container = ft.Container(content=self.log_list, bgcolor=ft.Colors.WHITE, padding=15, border_radius=12,
-                                          shadow=ft.BoxShadow(blur_radius=10,
-                                                              color=ft.Colors.with_opacity(0.1, "black")))
-
-        self.dataset_info = ft.Container(content=ft.Text("Инфо..."), bgcolor=ft.Colors.WHITE, padding=15,
-                                         border_radius=12, shadow=ft.BoxShadow(blur_radius=10,
-                                                                               color=ft.Colors.with_opacity(0.1,
-                                                                                                            "black")))
-
-        # === Вкладка 2: Проверка (Inference) ===
-        self.search_field = ft.TextField(
-            label="Найти фильм (на английском)",
-            prefix_icon=ft.Icons.SEARCH,
-            on_change=self._on_search_change,
+        self._loss_series = ft.LineChartData(
+            data_points=[],
+            stroke_width=2,
+            color=COLORS["primary"],
+            stroke_cap_round=True,
+        )
+        self.loss_chart = ft.LineChart(
+            data_series=[self._loss_series],
+            border=ft.border.all(1, COLORS["card_border"]),
+            horizontal_grid_lines=ft.ChartGridLines(color=ft.Colors.GREY_200, width=1),
+            vertical_grid_lines=ft.ChartGridLines(color=ft.Colors.GREY_200, width=1),
+            left_axis=ft.ChartAxis(labels_size=48, labels_interval=0.05),
+            bottom_axis=ft.ChartAxis(labels_size=32, labels_interval=1),
+            min_y=0,
             expand=True,
-            disabled=True  # Сразу выключено, пока модель не загружена
-        )
-        self.search_results = ft.ListView(height=200, spacing=5)
-        self.selected_movies_view = ft.Row(wrap=True, spacing=10)
-
-        self.recommendations_view = ft.ListView(expand=True, spacing=10)
-
-        # --- ИЗМЕНЕННАЯ КНОПКА ---
-        self.btn_load_model = ft.ElevatedButton(
-            "Выбрать файл модели (.pt)",
-            on_click=lambda _: self.model_picker.pick_files(
-                allow_multiple=False,
-                allowed_extensions=["pt"],
-                dialog_title="Выберите файл lightgcn_best.pt"
-            ),
-            icon=ft.Icons.FOLDER_OPEN
-        )
-        self.btn_get_recs = ft.ElevatedButton("Получить рекомендации", on_click=self._get_recommendations,
-                                              icon=ft.Icons.MOVIE_FILTER, disabled=True)
-        self.inference_status = ft.Text("Модель не выбрана", color=ft.Colors.GREY)
-
-    def _metric_card(self, title, value, color, icon):
-        return ft.Container(
-            content=ft.Row([
-                ft.Container(content=ft.Icon(icon, color=color, size=24), padding=10,
-                             bgcolor=ft.Colors.with_opacity(0.1, color), border_radius=10),
-                ft.Column([ft.Text(title, size=12, color=ft.Colors.GREY_600),
-                           ft.Text(value, size=20, weight="bold", color=ft.Colors.BLUE_GREY_900)], spacing=2)
-            ]),
-            padding=15, bgcolor=ft.Colors.WHITE, border_radius=12,
-            shadow=ft.BoxShadow(blur_radius=10, color=ft.Colors.with_opacity(0.05, "black")), width=190
         )
 
-    def _build_ui(self):
-        # 1. Training Tab Content
-        training_content = ft.Column([
-            ft.Container(
-                content=ft.Column([
-                    ft.Row([ft.Icon(ft.Icons.TUNE, color=ft.Colors.BLUE_700),
-                            ft.Text("Настройки обучения", size=20, weight="bold")], spacing=10),
-                    ft.Divider(height=10, color="transparent"),
-                    ft.Container(
-                        content=ft.Row([self.data_path_icon, self.data_path_text, self.btn_select_data],
-                                       alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        padding=ft.padding.symmetric(horizontal=15, vertical=8),
-                        border=ft.border.all(1, ft.Colors.GREY_300), border_radius=10, bgcolor=ft.Colors.WHITE
-                    ),
-                    ft.Divider(height=10, color="transparent"),
-                    ft.Row([
-                        ft.Column([ft.Text("Параметры модели", weight="bold"),
-                                   ft.Row([self.embedding_dim_input, self.num_layers_input])]),
-                        ft.Column([ft.Text("Гиперпараметры", weight="bold"),
-                                   ft.Row([self.epochs_input, self.batch_size_input, self.lr_input])]),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True),
-                    ft.Divider(height=10, color="transparent"),
-                    ft.Row([
-                        ft.Column([ft.Text("Устройство", weight="bold"), self.device_selector]),
-                        ft.Container(expand=True),
-                        self.stop_button, ft.Container(width=10), ft.Container(content=self.start_button, width=200)
-                    ], alignment=ft.MainAxisAlignment.END, vertical_alignment=ft.CrossAxisAlignment.END)
-                ]),
-                padding=25, bgcolor=ft.Colors.WHITE, border_radius=16,
-                shadow=ft.BoxShadow(blur_radius=15, color=ft.Colors.with_opacity(0.08, "black"))
-            ),
-            ft.Container(content=ft.Column(
-                [ft.Row([self.progress_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), self.progress_bar,
-                 self.batch_progress_section]), margin=ft.margin.only(top=20, bottom=20)),
-            ft.Row([self.epoch_card, self.loss_card, self.recall_card, self.ndcg_card, self.time_card],
-                   alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True),
-            ft.Container(height=20),
-            ft.Row([
-                ft.Column([
-                    ft.Row([ft.Container(content=self.dataset_info, expand=1),
-                            ft.Container(content=self.chart_container, expand=2)], expand=True)
-                ], expand=2),
-                ft.Container(content=self.log_container, width=400, expand=1)
-            ], vertical_alignment=ft.CrossAxisAlignment.START, expand=True)
-        ], scroll=ft.ScrollMode.AUTO)
+        self.log_view = ft.ListView(expand=True, spacing=2, padding=8, auto_scroll=True)
 
-        # 2. Inference Tab Content
-        inference_content = ft.Container(
-            content=ft.Column([
-                ft.Container(
-                    content=ft.Row([
-                        self.btn_load_model,
-                        self.inference_status,
-                        ft.Container(expand=True),
-                        self.btn_get_recs
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    padding=15, bgcolor=ft.Colors.WHITE, border_radius=12
-                ),
-                ft.Row([
-                    # Левая колонка: Поиск и выбор
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Text("1. Выберите фильмы (3-5 шт)", weight="bold", size=16),
-                            self.search_field,
-                            ft.Container(content=self.search_results, height=150, visible=False,
-                                         bgcolor=ft.Colors.WHITE,
-                                         border_radius=10,
-                                         shadow=ft.BoxShadow(blur_radius=5,
-                                                             color=ft.Colors.with_opacity(0.1, "black"))),
-                            ft.Text("Выбрано:", color=ft.Colors.GREY),
-                            self.selected_movies_view
-                        ]),
-                        expand=1, padding=20, bgcolor=ft.Colors.WHITE, border_radius=12
-                    ),
-                    # Правая колонка: Результат
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Text("2. Рекомендации для вас", weight="bold", size=16, color=ft.Colors.BLUE_800),
-                            self.recommendations_view
-                        ]),
-                        expand=1, padding=20, bgcolor=ft.Colors.WHITE, border_radius=12
-                    )
-                ], expand=True, spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
-            ]),
-            padding=20  # Padding теперь у контейнера
+        self.result_banner = ft.Container(
+            visible=False,
+            padding=12,
+            border_radius=8,
+        )
+        self.sidecar_btn = ft.OutlinedButton(
+            "Открыть sidecar.json",
+            icon=ft.Icons.DESCRIPTION,
+            on_click=self._on_open_sidecar,
+            visible=False,
+        )
+        self.folder_btn = ft.OutlinedButton(
+            "Открыть папку",
+            icon=ft.Icons.FOLDER_OPEN,
+            on_click=self._on_open_folder,
+            visible=False,
         )
 
-        # TABS
-        self.tabs = ft.Tabs(
-            selected_index=0,
-            animation_duration=300,
-            tabs=[
-                ft.Tab(
-                    text="Обучение модели",
-                    icon=ft.Icons.MODEL_TRAINING,
-                    content=training_content
-                ),
-                ft.Tab(
-                    text="Проверка (Inference)",
-                    icon=ft.Icons.MOVIE_FILTER,
-                    content=inference_content
-                ),
+        data_dir_row = ft.Row(
+            [self.data_dir_input, self.data_dir_btn],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.END,
+        )
+        output_row = ft.Row(
+            [self.model_name_input],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.END,
+        )
+        dataset_row = ft.Column([data_dir_row, output_row], spacing=8)
+
+        hp_row = ft.Row(
+            [
+                self.epochs_input, self.batch_size_input, self.lr_input,
+                self.embedding_dim_input, self.num_layers_input,
+                self.patience_input, self.eval_every_input,
             ],
-            expand=True
+            wrap=True, spacing=8,
         )
 
-        self.page.add(self.tabs)
+        controls_row = ft.Row(
+            [self.start_btn, self.stop_btn, ft.Container(expand=True), self.status_text],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+        )
 
-    # --- INFERENCE METHODS ---
-    def _on_model_file_selected(self, e: ft.FilePickerResultEvent):
-        """Вызывается, когда пользователь выбрал файл в проводнике"""
-        if e.files and len(e.files) > 0:
-            file_path = Path(e.files[0].path)
-            self._execute_model_loading(file_path)
+        metrics_row = ft.Row(
+            [
+                _metric_card("Эпоха", self.epoch_label),
+                _metric_card("Лучшая эпоха", self.best_epoch_label),
+                _metric_card("Loss", self.loss_label),
+                _metric_card("Recall@10", self.recall_label),
+                _metric_card("NDCG@10", self.ndcg_label),
+            ],
+            spacing=8,
+        )
 
-    def _execute_model_loading(self, model_path: Path):
-        """Загружает движок с указанным путем к модели"""
-        self.inference_status.value = f"Загрузка: {model_path.name}..."
-        self.inference_status.color = ft.Colors.ORANGE
-        self.page.update()
+        chart_box = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Container(
+                        content=ft.Text("Loss", size=12, color=COLORS["muted"],
+                                        weight=ft.FontWeight.W_500),
+                        padding=ft.padding.only(left=8),
+                    ),
+                    ft.Container(content=self.loss_chart, expand=True),
+                    ft.Container(
+                        content=ft.Text("Эпоха", size=12, color=COLORS["muted"],
+                                        weight=ft.FontWeight.W_500),
+                        alignment=ft.alignment.center,
+                    ),
+                ],
+                spacing=4,
+                expand=True,
+            ),
+            height=280,
+            padding=8,
+        )
+
+        result_row = ft.Row(
+            [self.result_banner, self.sidecar_btn, self.folder_btn],
+            spacing=8,
+            wrap=True,
+        )
+
+        log_box = ft.Container(
+            content=self.log_view,
+            bgcolor=ft.Colors.GREY_50,
+            border=ft.border.all(1, COLORS["card_border"]),
+            border_radius=8,
+            height=300,
+        )
+
+        self._root = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Источник и выход", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    dataset_row,
+                    ft.Text("Гиперпараметры", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    hp_row,
+                    controls_row,
+                    self.progress_bar,
+                    metrics_row,
+                    chart_box,
+                    result_row,
+                    ft.Text("Логи", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    log_box,
+                ],
+                spacing=12,
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            padding=16,
+        )
+
+        # FilePicker'ы должны жить в page.overlay.
+        self.app.page.overlay.append(self.data_dir_picker)
+
+    # ---- handlers ----
+
+    def _on_start(self, e: ft.ControlEvent) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
 
         try:
-            # 1. Данные берем через автопоиск
-            # Функция _find_data_directory уже возвращает путь к .../data/processed
-            data_dir = self._find_data_directory()
-
-            # ИСПРАВЛЕНИЕ: Проверяем файл прямо в data_dir, без добавления / "processed"
-            if not (data_dir / "id_mapping.json").exists():
-                raise FileNotFoundError(f"В папке {data_dir} нет id_mapping.json. Проверьте данные.")
-
-            # 2. Инициализация движка
-            device = list(self.device_selector.selected)[0]
-
-            self.inference_engine = InferenceEngine(data_dir, model_path, device=device)
-            success, msg = self.inference_engine.load_resources()
-
-            if success:
-                self.inference_status.value = "✅ Модель успешно загружена!"
-                self.inference_status.color = ft.Colors.GREEN
-                self.btn_get_recs.disabled = False
-                self.search_field.disabled = False
-                self.btn_load_model.text = "Выбрать другую модель"
-            else:
-                self.inference_status.value = f"Ошибка движка: {msg}"
-                self.inference_status.color = ft.Colors.RED
-
-        except Exception as ex:
-            self.inference_status.value = f"Ошибка: {str(ex)}"
-            self.inference_status.color = ft.Colors.RED
-            print(traceback.format_exc())
-
-        self.page.update()
-
-    def _on_search_change(self, e):
-        if not self.inference_engine or not self.inference_engine.is_loaded:
-            return
-
-        query = e.control.value
-        if len(query) < 2:
-            self.search_results.parent.visible = False
-            self.page.update()
-            return
-
-        results = self.inference_engine.search_movies(query)
-
-        self.search_results.controls.clear()
-        for movie in results:
-            self.search_results.controls.append(
-                ft.ListTile(
-                    title=ft.Text(movie['title'], weight="bold"),
-                    subtitle=ft.Text(str(int(movie['year'])) if movie['year'] else "Unknown"),
-                    on_click=lambda _, m=movie: self._add_movie(m)
-                )
-            )
-
-        self.search_results.parent.visible = True
-        self.page.update()
-
-    def _add_movie(self, movie):
-        # Проверка на дубликаты
-        if any(m['item_id'] == movie['item_id'] for m in self.selected_movies):
-            return
-
-        self.selected_movies.append(movie)
-
-        # Добавляем chip
-        chip = ft.Chip(
-            label=ft.Text(movie['title']),
-            on_delete=lambda e: self._remove_movie(movie),
-            leading=ft.Icon(ft.Icons.MOVIE)
-        )
-        self.selected_movies_view.controls.append(chip)
-
-        # Очистка поиска
-        self.search_field.value = ""
-        self.search_results.parent.visible = False
-        self.page.update()
-
-    def _remove_movie(self, movie):
-        self.selected_movies = [m for m in self.selected_movies if m['item_id'] != movie['item_id']]
-        # Перерисовка чипсов (простой способ - очистить и создать заново, или найти и удалить)
-        # Для простоты:
-        self.selected_movies_view.controls.clear()
-        for m in self.selected_movies:
-            self.selected_movies_view.controls.append(
-                ft.Chip(
-                    label=ft.Text(m['title']),
-                    on_delete=lambda e, mov=m: self._remove_movie(mov),
-                    leading=ft.Icon(ft.Icons.MOVIE)
-                )
-            )
-        self.page.update()
-
-    def _get_recommendations(self, e):
-        if not self.selected_movies:
-            return
-
-        item_ids = [m['item_id'] for m in self.selected_movies]
-        recs = self.inference_engine.get_recommendations(item_ids)
-
-        self.recommendations_view.controls.clear()
-        for i, rec in enumerate(recs):
-            self.recommendations_view.controls.append(
-                ft.Container(
-                    content=ft.Row([
-                        ft.Text(f"#{i + 1}", size=20, weight="bold", color=ft.Colors.BLUE_200),
-                        ft.Icon(ft.Icons.OPEN_IN_NEW, color=ft.Colors.BLUE_400, size=20), # Иконка ссылки
-                        ft.Column([
-                            ft.Text(f"{rec['title']} ({int(rec['year']) if rec['year'] else ''})",
-                                    weight="bold", size=16),
-                            ft.Text(f"{', '.join(rec['genres'][:3])}", color=ft.Colors.GREY_600, size=13),
-                        ], spacing=2, expand=True),
-                        ft.IconButton(
-                            icon=ft.Icons.ARROW_FORWARD_IOS,
-                            icon_color=ft.Colors.GREY_400,
-                            on_click=lambda _, url=rec['imdb_url']: self.page.launch_url(url)
-                        )
-                    ]),
-                    padding=15,
-                    border=ft.border.all(1, ft.Colors.GREY_200),
-                    border_radius=12,
-                    bgcolor=ft.Colors.WHITE,
-                    on_hover=self._on_hover_card,  # Можно добавить эффект при наведении
-                    on_click=lambda _, url=rec['imdb_url']: self.page.launch_url(url),  # Клик по всей карточке
-                    tooltip="Открыть на IMDb"
-                )
-            )
-        self.page.update()
-
-    def _on_hover_card(self, e):
-        e.control.bgcolor = ft.Colors.BLUE_50 if e.data == "true" else ft.Colors.WHITE
-        e.control.update()
-
-    # --- EXISTING HELPER METHODS ---
-    def _add_log(self, message: str, color=ft.Colors.BLACK):
-        timestamp = time.strftime("%H:%M:%S")
-        self.log_list.controls.append(
-            ft.Text(f"[{timestamp}] {message}", size=13, color=color, font_family="Consolas")
-        )
-        if len(self.log_list.controls) > 100:
-            self.log_list.controls.pop(0)
-        self.log_list.scroll_to(offset=-1, duration=100)
-        self.page.update()
-
-    def _find_data_directory(self):
-        selected_path = self.data_path_text.value
-        if "Автоопределение" not in selected_path and selected_path.strip():
-            custom_path = Path(selected_path)
-            if custom_path.exists():
-                self._add_log(f"✓ Выбранная папка: {custom_path}", ft.Colors.GREEN_400)
-                return custom_path
-
-        current_file = Path(__file__).resolve()
-
-        # Ищем корень проекта
-        current = current_file.parent
-        for _ in range(10):
-            if (current / "src").exists():
-                project_root = current
-                break
-            if (current / "data" / "processed").exists():
-                data_dir = current / "data" / "processed"
-                return data_dir
-            current = current.parent
-        else:
-            cwd = Path.cwd()
-            possible_paths = [
-                cwd / "data" / "processed",
-                cwd / "src" / "recommendation_system" / "data" / "processed",
-                cwd.parent / "data" / "processed",
-            ]
-            for path in possible_paths:
-                if path.exists():
-                    return path
-
-            raise FileNotFoundError("Не удалось найти папку с данными")
-
-        # Если нашли root
-        data_dir = project_root / "src" / "recommendation_system" / "data" / "processed"
-        if not data_dir.exists():
-            data_dir = project_root / "data" / "processed"
-
-        if data_dir.exists():
-            return data_dir
-
-        raise FileNotFoundError(f"Папка данных не найдена в {project_root}")
-
-    def _prepare_content_data(self, data, device):
-        """Подготовка тензоров жанров и годов для обучения"""
-        self._add_log("⚙️ Подготовка контентных признаков...", ft.Colors.BLUE_400)
-        metadata = data['metadata'].sort_values('item_id')
-
-        all_genres = set()
-        for gs in metadata['genres']:
-            if isinstance(gs, (list, np.ndarray)): all_genres.update(gs)
-        genre_list = sorted(list(all_genres))
-        genre_map = {g: i for i, g in enumerate(genre_list)}
-
-        genre_matrix = torch.zeros((len(metadata), len(genre_list)), device=device)
-        for idx, row in metadata.iterrows():
-            item_id = row['item_id']
-            if item_id >= len(metadata): continue
-            gs = row['genres']
-            if isinstance(gs, (list, np.ndarray)):
-                indices = [genre_map[g] for g in gs if g in genre_map]
-                if indices: genre_matrix[item_id, indices] = 1.0
-
-        years = metadata['year'].fillna(2000).values
-        years = (years - 1990) / 30.0
-        year_tensor = torch.tensor(years, dtype=torch.float32, device=device).view(-1, 1)
-
-        return (genre_matrix, year_tensor), len(genre_list)
-
-    def _start_training(self, e):
-        if self.is_training: return
-        self.is_training = True
-        self.start_button.disabled = True
-        self.stop_button.disabled = False
-        self.progress_text.value = "Инициализация..."
-        self._add_log("🚀 Запуск Гибридного Обучения...", ft.Colors.BLUE_400)
-        self.page.update()
-
-        try:
-            data_dir = self._find_data_directory()
-            builder = MovieGraphBuilder(data_dir)
-            data = builder.prepare_for_training(test_size=0.2, temporal=False)
-
-            self.update_queue.put({'type': 'dataset_info',
-                                   'data': {'num_users': data['num_users'], 'num_items': data['num_items'],
-                                            'train_interactions': len(data['train_df']),
-                                            'test_interactions': len(data['test_data']['interactions'])}})
-
-            device = list(self.device_selector.selected)[0]
             epochs = int(self.epochs_input.value)
             batch_size = int(self.batch_size_input.value)
             lr = float(self.lr_input.value)
-            dim = int(self.embedding_dim_input.value)
-            layers = int(self.num_layers_input.value)
+            embedding_dim = int(self.embedding_dim_input.value)
+            num_layers = int(self.num_layers_input.value)
+            patience = int(self.patience_input.value)
+            eval_every = int(self.eval_every_input.value)
+        except ValueError as exc:
+            self._add_log(f"Невалидные параметры: {exc}", COLORS["err"])
+            self.app.page.update()
+            return
 
-            # Подготовка фичей
-            item_features, num_genres = self._prepare_content_data(data, device)
+        domain = self.app.current_domain()
+        device = self.app.current_device()
+        data_dir_raw = (self.data_dir_input.value or "").strip()
+        if data_dir_raw:
+            data_dir = Path(data_dir_raw).expanduser().resolve()
+        else:
+            data_dir = PROJECT_ROOT / "data" / "processed" / domain
+        if not data_dir.exists():
+            self._add_log(f"data_dir не существует: {data_dir}", COLORS["err"])
+            self.app.page.update()
+            return
 
-            model = LightGCN(data['num_users'], data['num_items'], num_genres=num_genres, embedding_dim=dim,
-                             num_layers=layers).to(device)
-            self._add_log(f"🔧 Модель: {dim}D, {layers} layers, {num_genres} genres", ft.Colors.CYAN_400)
+        argv = [
+            "--domain", domain,
+            "--data-dir", str(data_dir),
+            "--epochs", str(epochs),
+            "--batch-size", str(batch_size),
+            "--lr", str(lr),
+            "--embedding-dim", str(embedding_dim),
+            "--num-layers", str(num_layers),
+            "--patience", str(patience),
+            "--eval-every", str(eval_every),
+            "--device", device,
+        ]
 
-            self.trainer = CustomTrainerWithCallback(model, self.update_queue, lambda: self.is_training)
-            self.training_thread = threading.Thread(target=self.trainer.train,
-                                                    args=(data, epochs, batch_size, lr, 5, 3, item_features))
-            self.training_thread.daemon = True
-            self.training_thread.start()
+        custom_name = (self.model_name_input.value or "").strip()
+        if custom_name:
+            if not custom_name.endswith(".pt"):
+                custom_name += ".pt"
+            output_path = PROJECT_ROOT / "models" / domain / custom_name
+            argv += ["--output", str(output_path)]
 
-        except Exception as ex:
-            self._add_log(f"❌ {ex}", ft.Colors.RED_400)
-            print(traceback.format_exc())
-            self.is_training = False
-            self.start_button.disabled = False
-            self.stop_button.disabled = True
+        self._stop_requested = False
+        self.start_btn.disabled = True
+        self.stop_btn.disabled = False
+        self.status_text.value = "Подготовка..."
+        self.progress_bar.value = None  # indeterminate until first epoch reports
+        self.result_banner.visible = False
+        self.sidecar_btn.visible = False
+        self.folder_btn.visible = False
+        self._sidecar_path = None
+        self._output_path = None
 
-    def _stop_training(self, e):
-        if not self.is_training: return
-        self.is_training = False
-        self.start_button.disabled = False
-        self.stop_button.disabled = True
-        self._add_log("⏹️ Остановка...", ft.Colors.ORANGE_400)
-        self.page.update()
+        self._loss_series.data_points = []
+        self.loss_chart.max_x = float(max(epochs, 1))
+        self.loss_chart.min_x = 0
 
-    async def _process_updates(self):
-        while True:
-            try:
-                if not self.update_queue.empty():
-                    update = self.update_queue.get_nowait()
+        self.epoch_label.value = f"0 / {epochs}"
+        self.best_epoch_label.value = "—"
+        self.loss_label.value = "—"
+        self.recall_label.value = "—"
+        self.ndcg_label.value = "—"
+        self.log_view.controls.clear()
+        self._add_log(
+            f"🚀 Старт обучения (domain={domain}, device={device}, epochs={epochs})",
+            COLORS["primary"],
+        )
+        self.app.page.update()
 
-                    if update['type'] == 'dataset_info':
-                        info_content = ft.Column([
-                            ft.Row([ft.Icon(ft.Icons.DATASET, color=ft.Colors.BLUE_700),
-                                    ft.Text("Информация о данных", weight="bold", size=16,
-                                            color=ft.Colors.BLUE_GREY_900)]),
-                            ft.Divider(),
-                            ft.Container(content=ft.Column([
-                                ft.Row([ft.Icon(ft.Icons.PEOPLE, size=18, color=ft.Colors.BLUE_500),
-                                        ft.Text(f"Пользователей: {update['data']['num_users']:,}", size=14)]),
-                                ft.Row([ft.Icon(ft.Icons.MOVIE, size=18, color=ft.Colors.ORANGE_500),
-                                        ft.Text(f"Элементов: {update['data']['num_items']:,}", size=14)]),
-                                ft.Row([ft.Icon(ft.Icons.SCHOOL, size=18, color=ft.Colors.GREEN_500),
-                                        ft.Text(f"Train: {update['data']['train_interactions']:,}", size=14)]),
-                                ft.Row([ft.Icon(ft.Icons.SCIENCE, size=18, color=ft.Colors.PURPLE_500),
-                                        ft.Text(f"Test: {update['data']['test_interactions']:,}", size=14)]),
-                            ], spacing=12), padding=ft.padding.only(top=10))
-                        ])
-                        self.dataset_info.content = info_content
-                        self.page.update()
+        self._thread = threading.Thread(
+            target=self._run_training, args=(argv,), daemon=True
+        )
+        self._thread.start()
+        self.app.page.run_task(self._process_updates)
 
-                    elif update['type'] == 'epoch_update':
-                        progress = update['epoch'] / update['total_epochs']
-                        self.progress_bar.value = progress
-                        self.progress_text.value = f"Эпоха {update['epoch']}/{update['total_epochs']} — {progress * 100:.1f}%"
+    def _on_stop(self, e: ft.ControlEvent) -> None:
+        self._stop_requested = True
+        self.status_text.value = "Останавливаем..."
+        self._add_log("⏹ Запрос остановки...", COLORS["warn"])
+        self.app.page.update()
 
-                        self.epoch_card.content.controls[1].controls[
-                            1].value = f"{update['epoch']}/{update['total_epochs']}"
-                        self.loss_card.content.controls[1].controls[1].value = f"{update['loss']:.4f}"
-                        self.time_card.content.controls[1].controls[1].value = update['time']
-                        if 'recall' in update:
-                            self.recall_card.content.controls[1].controls[1].value = f"{update['recall']:.4f}"
-                            self.ndcg_card.content.controls[1].controls[1].value = f"{update['ndcg']:.4f}"
+    def _on_open_sidecar(self, e: ft.ControlEvent) -> None:
+        if self._sidecar_path and self._sidecar_path.exists():
+            _open_in_explorer(self._sidecar_path)
 
-                        self._update_chart(update)
-                        self.page.update()
+    def _on_open_folder(self, e: ft.ControlEvent) -> None:
+        if self._output_path:
+            _open_in_explorer(self._output_path.parent)
 
-                    elif update['type'] == 'batch_progress':
-                        if not self.batch_progress_section.visible: self.batch_progress_section.visible = True
-                        self.batch_progress_bar.value = update['current_batch'] / update['total_batches']
-                        self.batch_progress_text.value = f"Training: {int(self.batch_progress_bar.value * 100)}% | {update['current_batch']}/{update['total_batches']} [{update['elapsed_str']}<{update['eta_str']}, {update['speed']:.1f}it/s, loss={update['loss']:.4f}]"
-                        self.page.update()
+    # ---- data_dir picker ----
 
-                    elif update['type'] == 'epoch_complete':
-                        self.batch_progress_bar.value = 0
-                        self.batch_progress_text.value = "Валидация..."
-                        self.page.update()
+    def _data_dir_initial(self) -> Path:
+        current = (self.data_dir_input.value or "").strip()
+        candidate = (
+            Path(current).expanduser() if current
+            else PROJECT_ROOT / "data" / "processed" / self.app.current_domain()
+        )
+        return _first_existing_ancestor(candidate, PROJECT_ROOT / "data")
 
-                    elif update['type'] == 'log':
-                        self._add_log(update['message'], update.get('color', ft.Colors.BLACK))
+    def _on_data_dir_picked(self, e: ft.FilePickerResultEvent) -> None:
+        if not e.path:
+            return
+        self.data_dir_input.value = e.path
+        self._user_overrode_data_dir = True
+        self.app.page.update()
 
-                    elif update['type'] == 'training_complete':
-                        self.is_training = False
-                        self.start_button.disabled = False
-                        self.stop_button.disabled = True
-                        self.batch_progress_section.visible = False
-                        self.progress_text.value = "✅ Завершено!"
-                        self._add_log("🎉 Обучение завершено!", ft.Colors.GREEN_600)
-                        self.page.update()
+    def _on_data_dir_edited(self, e: ft.ControlEvent) -> None:
+        # Любая ручная правка → отключаем auto-sync с domain switcher.
+        self._user_overrode_data_dir = True
 
-                await asyncio.sleep(0.05)
-            except Exception:
-                await asyncio.sleep(0.1)
+    def sync_data_dir_to_domain(self, domain: str) -> None:
+        """Called by TrainerGuiApp on domain change; no-op if user overrode."""
+        if self._user_overrode_data_dir:
+            return
+        self.data_dir_input.value = str(
+            PROJECT_ROOT / "data" / "processed" / domain
+        )
 
-    def _update_chart(self, update):
-        self.epochs_data.append(update['epoch'])
-        self.loss_data.append(update['loss'])
-        if 'recall' in update:
-            self.recall_data.append(update['recall'])
-            self.ndcg_data.append(update['ndcg'])
+    # ---- worker thread ----
 
-        # Текстовый график
-        txt = f"📉 Loss: {self.loss_data[-1]:.4f}\n"
-        txt += "█" * int(20 * (1 - min(self.loss_data[-1], 1.0))) + "░" * (
-                20 - int(20 * (1 - min(self.loss_data[-1], 1.0)))) + "\n\n"
-        if self.recall_data:
-            txt += f"⭐ Recall@10: {self.recall_data[-1]:.4f}\n"
-            txt += "█" * int(20 * self.recall_data[-1]) + "░" * (20 - int(20 * self.recall_data[-1])) + "\n\n"
-            txt += f"🎯 NDCG@10: {self.ndcg_data[-1]:.4f}\n"
-            txt += "█" * int(20 * self.ndcg_data[-1]) + "░" * (20 - int(20 * self.ndcg_data[-1])) + "\n"
+    def _run_training(self, argv: list) -> None:
+        gui_handler = _QueueLogHandler(self._update_q)
+        gui_handler.setLevel(logging.INFO)
+        gui_handler.setFormatter(
+            logging.Formatter("%(asctime)s | %(levelname)s | %(message)s",
+                              datefmt="%H:%M:%S")
+        )
 
-        self.chart_text.value = txt
-        self.page.update()
-
-
-class CustomTrainerWithCallback(LightGCNTrainer):
-    """Trainer с callback'ами для GUI (Hybrid Version)"""
-
-    def __init__(self, model, update_queue, is_training_flag):
-        super().__init__(model)
-        self.update_queue = update_queue
-        self.is_training_flag = is_training_flag
-        self.start_time = time.time()
-
-    def train(self, data, num_epochs, batch_size, lr, eval_every, early_stopping_patience, item_features):
-        """Метод обучения с поддержкой Hybrid LightGCN"""
+        from recommendation_system.models.gnn import trainer as trainer_mod
+        trainer_mod.logger.addHandler(gui_handler)
         try:
-            import torch.optim as optim
-            from lightgcn import CombinedLoss # Убедись, что импорт работает
+            rc = trainer_mod.main(
+                argv,
+                on_epoch_end=lambda ev: self._update_q.put({"type": "epoch", "data": ev}),
+                stop_flag=lambda: self._stop_requested,
+            )
+            self._update_q.put({"type": "done", "rc": int(rc) if rc is not None else 0})
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+            self._update_q.put({"type": "done", "rc": code})
+        except Exception:
+            self._update_q.put({"type": "error", "tb": traceback.format_exc()})
+        finally:
+            trainer_mod.logger.removeHandler(gui_handler)
 
-            # --- 1. НАСТРОЙКА ПУТЕЙ ---
-            project_root = Path(__file__).resolve().parents[4]
-            save_dir = project_root / 'models'
-            save_dir.mkdir(parents=True, exist_ok=True)
+    async def _process_updates(self) -> None:
+        while self._thread is not None and self._thread.is_alive():
+            self._drain_queue()
+            await asyncio.sleep(0.1)
+        self._drain_queue()
+        self.start_btn.disabled = False
+        self.stop_btn.disabled = True
+        if self.progress_bar.value is None:
+            self.progress_bar.value = 0
+        self.app.page.update()
 
-            self.update_queue.put({
-                'type': 'log',
-                'message': f'💾 Модели будут сохраняться в: {save_dir}',
-                'color': ft.Colors.BLUE_300
-            })
+    def _drain_queue(self) -> None:
+        drained = False
+        try:
+            while True:
+                msg = self._update_q.get_nowait()
+                self._handle_message(msg)
+                drained = True
+        except queue.Empty:
+            pass
+        if drained:
+            self.app.page.update()
 
-            # --- 2. ПОДГОТОВКА ДАННЫХ НА GPU ---
-            train_graph = data['train_graph'].to(self.device)
-            train_df = data['train_df']
+    def _handle_message(self, msg: dict) -> None:
+        kind = msg.get("type")
+        if kind == "logger":
+            self._add_log(msg["text"], msg.get("color") or ft.Colors.GREY_700)
+            self._capture_paths(msg["text"])
+        elif kind == "epoch":
+            d = msg["data"]
+            ep, total = int(d["epoch"]), int(d["total_epochs"])
+            self.epoch_label.value = f"{ep} / {total}"
+            self.loss_label.value = f"{d['loss']:.4f}"
+            if d.get("recall") is not None:
+                self.recall_label.value = f"{d['recall']:.4f}"
+            if d.get("ndcg") is not None:
+                self.ndcg_label.value = f"{d['ndcg']:.4f}"
+            if d.get("best_epoch"):
+                self.best_epoch_label.value = str(d["best_epoch"])
+            self._loss_series.data_points.append(
+                ft.LineChartDataPoint(float(ep), float(d["loss"]))
+            )
+            self.progress_bar.value = ep / max(total, 1)
+            self.status_text.value = f"Эпоха {ep}/{total}"
+        elif kind == "done":
+            rc = msg["rc"]
+            self.progress_bar.value = 1.0
+            if rc == 0:
+                self.result_banner.bgcolor = COLORS["ok_bg"]
+                self.result_banner.content = ft.Text(
+                    "✅ Обучение завершено, sanity-check пройден",
+                    color=COLORS["ok"], weight=ft.FontWeight.BOLD,
+                )
+                self.status_text.value = "Готово"
+            elif rc == 1:
+                self.result_banner.bgcolor = COLORS["err_bg"]
+                self.result_banner.content = ft.Text(
+                    "⚠ Обучение завершено, sanity-check ПРОВАЛЕН (см. sidecar)",
+                    color=COLORS["err"], weight=ft.FontWeight.BOLD,
+                )
+                self.status_text.value = "Sanity FAIL"
+            else:
+                self.result_banner.bgcolor = COLORS["err_bg"]
+                self.result_banner.content = ft.Text(
+                    f"❌ Ошибка обучения (rc={rc})",
+                    color=COLORS["err"], weight=ft.FontWeight.BOLD,
+                )
+                self.status_text.value = "Ошибка"
+            self.result_banner.visible = True
+            if self._sidecar_path is not None:
+                self.sidecar_btn.visible = True
+            if self._output_path is not None:
+                self.folder_btn.visible = True
+        elif kind == "error":
+            self._add_log("❌ Exception:\n" + msg["tb"], COLORS["err"])
+            self.result_banner.bgcolor = COLORS["err_bg"]
+            self.result_banner.content = ft.Text(
+                "❌ Необработанное исключение (см. логи)",
+                color=COLORS["err"], weight=ft.FontWeight.BOLD,
+            )
+            self.result_banner.visible = True
+            self.status_text.value = "Ошибка"
 
-            # Данные для батчей сразу на GPU (для скорости)
-            train_users_gpu = torch.LongTensor(train_df['user_id'].values).to(self.device)
-            train_items_gpu = torch.LongTensor(train_df['item_id'].values).to(self.device)
+    def _capture_paths(self, text: str) -> None:
+        # Trainer logs include "Sidecar:    <path>" and "Checkpoint: <path>" on success
+        # and "Output: <path>" on the config dump.
+        for line in text.splitlines():
+            stripped = line.strip()
+            if "Sidecar:" in stripped:
+                p = stripped.split("Sidecar:", 1)[1].strip()
+                if p.endswith(".json"):
+                    self._sidecar_path = Path(p)
+            elif "Checkpoint:" in stripped:
+                p = stripped.split("Checkpoint:", 1)[1].strip()
+                if p.endswith(".pt"):
+                    self._output_path = Path(p)
+            elif stripped.startswith("Output:"):
+                p = stripped.split("Output:", 1)[1].strip()
+                if p.endswith(".pt"):
+                    self._output_path = Path(p)
 
-            # Подготовка фичей (жанры, годы) на GPU
-            genre_matrix, year_tensor = item_features
-            item_features_gpu = (genre_matrix.to(self.device), year_tensor.to(self.device))
+    def _add_log(self, text: str, color) -> None:
+        self.log_view.controls.append(
+            ft.Text(text, size=12, color=color, selectable=True, font_family="Consolas")
+        )
+        if len(self.log_view.controls) > 500:
+            del self.log_view.controls[: len(self.log_view.controls) - 500]
 
-            # Оптимизатор с L2 регуляризацией (weight_decay)
-            # 1e-4 - оптимально для Hybrid модели
-            optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-5)
-            loss_fn = CombinedLoss(
-                bpr_temperature=0.5,
-                infonce_temperature=0.1,
-                infonce_weight=0.2
+
+class _QueueLogHandler(logging.Handler):
+    """Forwards stdlib log records into the GUI's update queue."""
+
+    def __init__(self, q: queue.Queue) -> None:
+        super().__init__()
+        self._q = q
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            text = self.format(record)
+        except Exception:
+            return
+        if record.levelno >= logging.ERROR:
+            color = COLORS["err"]
+        elif record.levelno >= logging.WARNING:
+            color = COLORS["warn"]
+        else:
+            color = None
+        self._q.put({"type": "logger", "text": text, "color": color})
+
+
+# ======================================================================
+# Tab 2 — Dataset creation
+# ======================================================================
+
+
+def _first_existing_ancestor(path: Path, fallback: Path) -> Path:
+    """Walk up from `path` until existing dir, else fallback. Flet иногда игнорирует
+    initial_directory если путь не существует и открывает picker в неожиданном месте."""
+    p = path
+    while p != p.parent and not p.is_dir():
+        p = p.parent
+    return p if p.is_dir() else fallback
+
+
+def _dataset_sanity(folder_name: str) -> tuple[bool, list[str]]:
+    """Post-build validation. Reads parquet metadata + small column slices only —
+    safe to run on the UI thread (< 1s for 20M-row interactions).
+
+    folder_name = subfolder name under data/processed/ (movies, tv, или custom).
+    """
+    base = PROJECT_ROOT / "data" / "processed" / folder_name
+    failures: list[str] = []
+    inter = base / "interactions_final.parquet"
+    items = base / "items_metadata_final.parquet"
+    mapping = base / "id_mapping.json"
+
+    for p in (inter, items, mapping):
+        if not p.exists():
+            failures.append(f"missing: {p.name}")
+    if failures:
+        return False, failures
+
+    try:
+        import pyarrow.parquet as pq
+        n_inter = pq.ParquetFile(inter).metadata.num_rows
+    except Exception as e:
+        failures.append(f"interactions_final.parquet unreadable: {e}")
+        return False, failures
+    if n_inter < 100_000:
+        failures.append(f"interactions: {n_inter:,} rows < 100k (smoke-run?)")
+
+    try:
+        import pandas as pd
+        items_df = pd.read_parquet(items, columns=["tmdb_id", "title", "genres"])
+    except Exception as e:
+        failures.append(f"items_metadata_final.parquet schema mismatch: {e}")
+        return False, failures
+
+    required = {"tmdb_id", "title", "genres"}
+    missing_cols = required - set(items_df.columns)
+    if missing_cols:
+        failures.append(f"items: missing columns {sorted(missing_cols)}")
+    if items_df["tmdb_id"].duplicated().any():
+        n_dup = int(items_df["tmdb_id"].duplicated().sum())
+        failures.append(f"items: {n_dup} duplicate tmdb_ids")
+
+    try:
+        with open(mapping, encoding="utf-8") as f:
+            m = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        failures.append(f"id_mapping.json unreadable: {e}")
+        return False, failures
+    num_users = m.get("num_users")
+    num_items = m.get("num_items") or m.get("num_trained_items")
+    if not isinstance(num_users, int) or num_users <= 0:
+        failures.append("id_mapping: invalid num_users")
+    if not isinstance(num_items, int) or num_items <= 0:
+        failures.append("id_mapping: invalid num_items / num_trained_items")
+
+    return (len(failures) == 0), failures
+
+
+# Preset values for the 8 MovieDatasetProcessor params (spec 3.2 + 3.3).
+# Keys MUST match MovieDatasetProcessor.__init__ param names.
+_PARAM_ORDER = (
+    "top_n_movies", "top_n_tv",
+    "min_user_interactions", "min_item_interactions",
+    "rating_threshold", "max_interactions",
+    "min_year", "languages",
+)
+
+_PARAM_PRESETS: dict[str, dict[str, str]] = {
+    "smoke": {
+        "top_n_movies": "500", "top_n_tv": "200",
+        "min_user_interactions": "5", "min_item_interactions": "5",
+        "rating_threshold": "3.5", "max_interactions": "",
+        "min_year": "2010", "languages": "en",
+    },
+    "default": {
+        "top_n_movies": "15000", "top_n_tv": "10000",
+        "min_user_interactions": "10", "min_item_interactions": "10",
+        "rating_threshold": "3.5", "max_interactions": "15000000",
+        "min_year": "", "languages": "en",
+    },
+    "full": {
+        "top_n_movies": "", "top_n_tv": "",
+        "min_user_interactions": "", "min_item_interactions": "",
+        "rating_threshold": "", "max_interactions": "",
+        "min_year": "", "languages": "en",
+    },
+}
+
+_PARAM_TOOLTIPS: dict[str, str] = {
+    "top_n_movies": "Сколько фильмов взять (по популярности). Пусто = без лимита.",
+    "top_n_tv": "Сколько TV-шоу взять (по популярности). Пусто = без лимита.",
+    "min_user_interactions": "K-core: минимум оценок у пользователя. Пусто = без фильтра.",
+    "min_item_interactions": "K-core: минимум оценок у item. Пусто = без фильтра.",
+    "rating_threshold": "Порог «нравится» (0-5). 3.5 = ≥3.5 считается положительным. Пусто = 0.",
+    "max_interactions": "Лимит общего числа взаимодействий. Пусто = без лимита.",
+    "min_year": "Минимальный год выпуска. Пусто = без фильтра.",
+    "languages": "Языки оригинала через запятую (ISO 639-1): en / en,ru,uk. Пусто = en.",
+}
+
+# Sentinel for params whose backend signature is non-Optional (top_n_*, max_interactions, etc.).
+# 10^9 effectively means «без лимита» — .head() / boolean filter no-op.
+_HUGE_INT = 10 ** 9
+
+
+# spec 3.3.b — Required/Optional + how to check existence for each source field.
+# Key matches DatasetTab attribute name. `default_rel` is relative to PROJECT_ROOT/data.
+# `check_file` (optional): for directory inputs, the representative file to test inside.
+_SOURCE_META: dict[str, dict] = {
+    "ml_dir_input": {
+        "required": True,
+        "default_rel": "raw/ml-32m",
+        "check_file": "ratings.csv",
+    },
+    "tmdb_csv_input": {
+        "required": False,
+        "default_rel": "raw/TMDB_movie_dataset_v11.csv",
+        "check_file": None,
+    },
+    "trakt_shows_input": {
+        "required": True,
+        "default_rel": "raw/trakt_shows.csv",
+        "check_file": None,
+    },
+    "trakt_inter_input": {
+        "required": True,
+        "default_rel": "raw/trakt_interactions.csv",
+        "check_file": None,
+    },
+    "amazon_field": {
+        "required": False,
+        "default_rel": None,
+        "check_file": "meta_Movies_and_TV.jsonl",
+    },
+}
+
+
+class DatasetTab:
+    """
+    Wraps make_dataset.MovieDatasetProcessor.build_*_dataset() with a small UI:
+    domain switcher (movies/tv/all), Amazon-dir field, indeterminate progress,
+    post-build sanity validation. After success refreshes Tab 4 "Данные".
+    """
+
+    def __init__(self, app: "TrainerGuiApp") -> None:
+        self.app = app
+        self._thread: threading.Thread | None = None
+        self._update_q: queue.Queue = queue.Queue()
+        self._preset_silent: bool = False
+        self._build()
+
+    def build(self) -> ft.Control:
+        return self._root
+
+    def _build(self) -> None:
+        self.domain_dd = ft.Dropdown(
+            label="Домен",
+            value="movies",
+            options=[
+                ft.dropdown.Option("movies", "Movies"),
+                ft.dropdown.Option("tv", "TV"),
+                ft.dropdown.Option("all", "All (последовательно)"),
+            ],
+            width=220,
+            on_change=self._on_domain_change,
+        )
+        self.name_input = ft.TextField(
+            label="Имя датасета",
+            hint_text="Пусто → 'movies' / 'tv' (зависит от домена)",
+            width=260,
+            dense=True,
+        )
+
+        raw_default = PROJECT_ROOT / "data" / "raw"
+
+        # 4 path-override строки + 4 FilePicker'а в overlay.
+        # on_change → пересчёт счётчика в title ExpansionTile «Источники».
+        self.ml_dir_input = ft.TextField(
+            label="MovieLens dir", hint_text=str(raw_default / "ml-32m"),
+            width=380, dense=True,
+            on_change=self._on_source_change,
+        )
+        self.ml_dir_picker = ft.FilePicker(on_result=self._on_ml_dir_picked)
+        self.ml_dir_btn = ft.IconButton(
+            ft.Icons.FOLDER_OPEN, tooltip="Выбрать папку",
+            on_click=lambda _e: self.ml_dir_picker.get_directory_path(
+                dialog_title="MovieLens directory",
+                initial_directory=str(self._picker_initial_dir(
+                    self.ml_dir_input.value, raw_default / "ml-32m"
+                )),
+            ),
+        )
+
+        self.tmdb_csv_input = ft.TextField(
+            label="TMDB CSV",
+            hint_text=str(raw_default / "TMDB_movie_dataset_v11.csv"),
+            width=380, dense=True,
+            on_change=self._on_source_change,
+        )
+        self.tmdb_csv_picker = ft.FilePicker(on_result=self._on_tmdb_csv_picked)
+        self.tmdb_csv_btn = ft.IconButton(
+            ft.Icons.UPLOAD_FILE, tooltip="Выбрать файл",
+            on_click=lambda _e: self.tmdb_csv_picker.pick_files(
+                allow_multiple=False, allowed_extensions=["csv"],
+                dialog_title="TMDB metadata CSV",
+                initial_directory=str(self._picker_initial_dir(
+                    self.tmdb_csv_input.value, raw_default
+                )),
+            ),
+        )
+
+        self.trakt_shows_input = ft.TextField(
+            label="Trakt shows CSV", hint_text=str(raw_default / "trakt_shows.csv"),
+            width=380, dense=True,
+            on_change=self._on_source_change,
+        )
+        self.trakt_shows_picker = ft.FilePicker(on_result=self._on_trakt_shows_picked)
+        self.trakt_shows_btn = ft.IconButton(
+            ft.Icons.UPLOAD_FILE, tooltip="Выбрать файл",
+            on_click=lambda _e: self.trakt_shows_picker.pick_files(
+                allow_multiple=False, allowed_extensions=["csv"],
+                dialog_title="Trakt shows CSV",
+                initial_directory=str(self._picker_initial_dir(
+                    self.trakt_shows_input.value, raw_default
+                )),
+            ),
+        )
+
+        self.trakt_inter_input = ft.TextField(
+            label="Trakt interactions CSV",
+            hint_text=str(raw_default / "trakt_interactions.csv"),
+            width=380, dense=True,
+            on_change=self._on_source_change,
+        )
+        self.trakt_inter_picker = ft.FilePicker(on_result=self._on_trakt_inter_picked)
+        self.trakt_inter_btn = ft.IconButton(
+            ft.Icons.UPLOAD_FILE, tooltip="Выбрать файл",
+            on_click=lambda _e: self.trakt_inter_picker.pick_files(
+                allow_multiple=False, allowed_extensions=["csv"],
+                initial_directory=str(self._picker_initial_dir(
+                    self.trakt_inter_input.value, raw_default
+                )),
+                dialog_title="Trakt interactions CSV",
+            ),
+        )
+
+        self.amazon_field = ft.TextField(
+            label="Amazon dir (опц.) — Optional Amazon Reviews",
+            value="",
+            hint_text="Пусто = Amazon не используется; путь к папке с meta_Movies_and_TV.jsonl",
+            width=400,
+            dense=True,
+            on_change=self._on_source_change,
+        )
+        self.amazon_picker = ft.FilePicker(on_result=self._on_amazon_picked)
+        self.amazon_btn = ft.IconButton(
+            ft.Icons.FOLDER_OPEN, tooltip="Выбрать папку Amazon",
+            on_click=lambda _e: self.amazon_picker.get_directory_path(
+                dialog_title="Amazon Reviews directory",
+                initial_directory=str(self._picker_initial_dir(
+                    self.amazon_field.value, Path.home()
+                )),
+            ),
+        )
+
+        # FilePicker'ы должны жить в page.overlay.
+        self.app.page.overlay.extend([
+            self.ml_dir_picker, self.tmdb_csv_picker,
+            self.trakt_shows_picker, self.trakt_inter_picker,
+            self.amazon_picker,
+        ])
+
+        # spec 3.3.b — live ✓/✗ status icons (1 на каждое из 5 source-полей).
+        self.source_status_icons: dict[str, ft.Icon] = {
+            name: ft.Icon(
+                ft.Icons.REMOVE_CIRCLE_OUTLINE,
+                color=COLORS["muted"], size=20,
+                tooltip="Статус источника",
+            )
+            for name in _SOURCE_META
+        }
+
+        # --- Параметры пайплайна (8 шт.) + Preset Dropdown — spec 3.2 + 3.3 ---
+        self.preset_dd = ft.Dropdown(
+            label="Preset",
+            value="default",
+            options=[
+                ft.dropdown.Option("smoke", "Smoke (быстрый тест)"),
+                ft.dropdown.Option("default", "Default (бывшие хардкоды)"),
+                ft.dropdown.Option("full", "Full (без лимитов)"),
+                ft.dropdown.Option("custom", "Custom (ручная правка)"),
+            ],
+            width=260,
+            on_change=self._on_preset_change,
+        )
+
+        self.param_inputs: dict[str, ft.TextField] = {}
+        for name in _PARAM_ORDER:
+            self.param_inputs[name] = ft.TextField(
+                label=name,
+                tooltip=_PARAM_TOOLTIPS[name],
+                value=_PARAM_PRESETS["default"][name],
+                width=180,
+                dense=True,
+                on_change=self._on_param_change,
             )
 
-            best_recall = 0
-            best_epoch = 0
-            patience_counter = 0
+        self.build_btn = ft.ElevatedButton(
+            "Собрать",
+            icon=ft.Icons.BUILD,
+            on_click=self._on_build,
+            bgcolor=COLORS["primary"],
+            color=ft.Colors.WHITE,
+            height=44,
+        )
+        self.stop_btn = ft.ElevatedButton(
+            "Стоп",
+            icon=ft.Icons.STOP_CIRCLE,
+            bgcolor=ft.Colors.GREY_400,
+            color=ft.Colors.WHITE,
+            disabled=True,
+            height=44,
+            tooltip="Сборка не прерывается — make_dataset не поддерживает cancel-флаг.",
+        )
 
-            num_samples = len(train_df)
-            num_batches = (num_samples + batch_size - 1) // batch_size
+        self.status_text = ft.Text("Готов к работе", size=14, color=COLORS["muted"])
+        self.progress_bar = ft.ProgressBar(
+            value=0, color=COLORS["primary"], bgcolor=ft.Colors.GREY_200, height=8
+        )
 
-            for epoch in range(1, num_epochs + 1):
-                if not self.is_training_flag():
-                    self.update_queue.put(
-                        {'type': 'log', 'message': '⏹️ Остановлено пользователем', 'color': ft.Colors.ORANGE_400})
-                    break
+        self.log_view = ft.ListView(expand=True, spacing=2, padding=8, auto_scroll=True)
 
-                epoch_start = time.time()
+        self.result_banner = ft.Container(
+            visible=False, padding=12, border_radius=8,
+        )
 
-                # --- 3. ЗАПУСК ЭПОХИ ---
-                train_loss = self._train_epoch_with_progress(
-                    train_graph, train_users_gpu, train_items_gpu, item_features_gpu,
-                    optimizer, loss_fn, batch_size, epoch, num_epochs, num_batches, num_samples
-                )
+        self.open_folder_btn = ft.OutlinedButton(
+            "Открыть папку датасета",
+            icon=ft.Icons.FOLDER_OPEN,
+            on_click=self._on_open_folder,
+            visible=False,
+        )
 
-                self.update_queue.put({'type': 'epoch_complete'})
+        def _badge(required: bool) -> ft.Container:
+            return ft.Container(
+                content=ft.Text(
+                    "Required" if required else "Optional",
+                    size=10, weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.WHITE,
+                ),
+                bgcolor=COLORS["err"] if required else COLORS["muted"],
+                padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                border_radius=10,
+                width=70, alignment=ft.alignment.center,
+            )
 
-                epoch_time = time.time() - epoch_start
-                elapsed_total = time.time() - self.start_time
-                time_str = f"{int(elapsed_total // 60):02d}:{int(elapsed_total % 60):02d}"
+        def source_row(field_attr: str, text_field, button):
+            """Row: [badge | text_field | (optional)button | status_icon]."""
+            required = _SOURCE_META[field_attr]["required"]
+            status = self.source_status_icons[field_attr]
+            children = [_badge(required), text_field]
+            if button is not None:
+                children.append(button)
+            children.append(status)
+            return ft.Row(
+                children, spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
 
-                update = {
-                    'type': 'epoch_update',
-                    'epoch': epoch,
-                    'total_epochs': num_epochs,
-                    'loss': train_loss,
-                    'time': time_str
-                }
+        # Контейнеры с visible-toggle по домену.
+        self.movies_sources_box = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Источники Movies (пусто → дефолт data/raw/...)",
+                            size=12, color=COLORS["muted"]),
+                    source_row("ml_dir_input", self.ml_dir_input, self.ml_dir_btn),
+                    source_row("tmdb_csv_input", self.tmdb_csv_input, self.tmdb_csv_btn),
+                ],
+                spacing=4,
+            ),
+        )
+        self.tv_sources_box = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Источники TV (пусто → дефолт data/raw/...)",
+                            size=12, color=COLORS["muted"]),
+                    source_row("trakt_shows_input", self.trakt_shows_input,
+                               self.trakt_shows_btn),
+                    source_row("trakt_inter_input", self.trakt_inter_input,
+                               self.trakt_inter_btn),
+                ],
+                spacing=4,
+            ),
+        )
+        self.amazon_box = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Amazon (опц., используется и для movies, и для TV)",
+                            size=12, color=COLORS["muted"]),
+                    source_row("amazon_field", self.amazon_field, self.amazon_btn),
+                ],
+                spacing=4,
+            ),
+        )
 
-                # --- 4. ВАЛИДАЦИЯ ---
-                if epoch % eval_every == 0 or epoch == 1:
-                    self.update_queue.put(
-                        {'type': 'log', 'message': f"🔍 Эпоха {epoch}: оценка...", 'color': ft.Colors.BLUE_200})
+        # 8 параметров в 4 ряда по 2 + Preset Dropdown сверху (spec 3.2 + 3.3).
+        # ExpansionTile-обёртка появится в Шаге 3 (reorganization).
+        def _param_row(*names: str) -> ft.Row:
+            return ft.Row(
+                [self.param_inputs[n] for n in names], spacing=12,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            )
 
-                    metrics = self.evaluate(
-                        train_graph, data['test_data'], data['train_matrix'],
-                        k=10, sample_users=1000, item_features=item_features_gpu
-                    )
+        self.params_box = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("Параметры пайплайна",
+                                    size=12, color=COLORS["muted"]),
+                            self.preset_dd,
+                        ],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    _param_row("top_n_movies", "top_n_tv"),
+                    _param_row("min_user_interactions", "min_item_interactions"),
+                    _param_row("rating_threshold", "max_interactions"),
+                    _param_row("min_year", "languages"),
+                ],
+                spacing=6,
+            ),
+        )
 
-                    recall = metrics['recall@10']
-                    ndcg = metrics['ndcg@10']
+        controls_row = ft.Row(
+            [
+                self.domain_dd,
+                self.name_input,
+                ft.Container(expand=True),
+                self.build_btn,
+                self.stop_btn,
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+        )
 
-                    update['recall'] = recall
-                    update['ndcg'] = ndcg
+        result_row = ft.Row(
+            [self.result_banner, self.open_folder_btn],
+            spacing=8, wrap=True,
+        )
 
-                    self.update_queue.put({
-                        'type': 'log',
-                        'message': f"✅ Эпоха {epoch} | Loss: {train_loss:.4f} | R@10: {recall:.4f}",
-                        'color': ft.Colors.GREEN_400
-                    })
+        log_box = ft.Container(
+            content=self.log_view,
+            bgcolor=ft.Colors.GREY_50,
+            border=ft.border.all(1, COLORS["card_border"]),
+            border_radius=8,
+            height=380,
+        )
 
-                    # Сохранение лучшей модели
-                    if recall > best_recall:
-                        best_recall = recall
-                        best_epoch = epoch
-                        patience_counter = 0
+        # --- 2 ExpansionTile-обёртки (spec 3.3.a) ---
+        self.sources_title = ft.Text(
+            "Источники / Sources", weight=ft.FontWeight.W_500, size=14,
+        )
+        self.sources_tile = ft.ExpansionTile(
+            title=self.sources_title,
+            initially_expanded=False,
+            controls=[
+                self.movies_sources_box,
+                self.tv_sources_box,
+                self.amazon_box,
+            ],
+            collapsed_bgcolor=ft.Colors.GREY_50,
+            bgcolor=ft.Colors.GREY_50,
+        )
 
-                        model_path = save_dir / 'lightgcn_best.pt'
-                        torch.save({
-                            'epoch': epoch,
-                            'model_state_dict': self.model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),
-                            'recall@10': recall,
-                            'ndcg@10': ndcg,
-                            'metrics': metrics
-                        }, model_path)
+        self.params_title = ft.Text(
+            "Параметры / Parameters", weight=ft.FontWeight.W_500, size=14,
+        )
+        self.params_tile = ft.ExpansionTile(
+            title=self.params_title,
+            initially_expanded=False,
+            controls=[self.params_box],
+            collapsed_bgcolor=ft.Colors.GREY_50,
+            bgcolor=ft.Colors.GREY_50,
+        )
 
-                        self.update_queue.put(
-                            {'type': 'log', 'message': f"🏆 Рекорд! Recall: {recall:.4f}", 'color': ft.Colors.AMBER_600})
-                        self.update_queue.put({'type': 'log', 'message': f"💾 Сохранено: {model_path.name}",
-                                               'color': ft.Colors.BLUE_GREY_500})
-                    else:
-                        patience_counter += 1
-                        if patience_counter >= early_stopping_patience:
-                            self.update_queue.put({'type': 'log', 'message': f"⏹️ Early stopping (эпоха {epoch})",
-                                                   'color': ft.Colors.ORANGE_400})
-                            break
-                else:
-                    self.update_queue.put({'type': 'log', 'message': f"📝 Эпоха {epoch} | Loss: {train_loss:.4f}",
-                                           'color': ft.Colors.GREY_600})
+        self._root = ft.Container(
+            content=ft.Column(
+                [
+                    controls_row,
+                    self.sources_tile,
+                    self.params_tile,
+                    ft.Row([self.progress_bar], expand=True),
+                    self.status_text,
+                    result_row,
+                    ft.Text("Логи", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    log_box,
+                ],
+                spacing=12,
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            padding=16,
+        )
 
-                self.update_queue.put(update)
+        # Применить начальную visibility по дефолтному домену + посчитать заголовки.
+        self._apply_domain_visibility(self.domain_dd.value)
+        self._update_titles()
+        self._update_source_status()
 
-            self.update_queue.put({'type': 'training_complete'})
+    # ---- handlers ----
 
-        except Exception as e:
-            self.update_queue.put({'type': 'log', 'message': f"❌ ОШИБКА: {str(e)}", 'color': ft.Colors.RED_400})
-            self.update_queue.put({'type': 'error', 'message': str(e)})
-            print(traceback.format_exc())
+    def _on_domain_change(self, e: ft.ControlEvent) -> None:
+        self._apply_domain_visibility(e.control.value)
+        self._update_titles()
+        self._update_source_status()
+        self.app.page.update()
 
-    def _train_epoch_with_progress(self, train_graph, train_users, train_items, item_features,
-                                   optimizer, loss_fn, batch_size, epoch, num_epochs, num_batches, num_samples):
-        """Оптимизированная эпоха обучения (Hybrid + GPU Fast)"""
-        self.model.train()
-        total_loss = 0.0
+    def _apply_domain_visibility(self, domain: str) -> None:
+        # movies/all → показать movies-источники; tv/all → tv. Amazon всегда.
+        self.movies_sources_box.visible = domain in ("movies", "all")
+        self.tv_sources_box.visible = domain in ("tv", "all")
+        self.amazon_box.visible = True
 
-        # Перемешивание на GPU
-        indices = torch.randperm(num_samples, device=self.device)
-        start_t = time.time()
+    # ---- titles / counters (spec 3.3.a) ----
 
-        for batch_idx in range(num_batches):
-            if not self.is_training_flag(): break
+    def _on_source_change(self, _e: ft.ControlEvent) -> None:
+        self._update_titles()
+        self._update_source_status()
+        self.app.page.update()
 
-            start = batch_idx * batch_size
-            end = min(start + batch_size, num_samples)
-            idx = indices[start:end]
+    # ---- live source ✓/✗ status (spec 3.3.b) ----
 
-            # Данные уже на GPU, просто берем срез
-            batch_u = train_users[idx]
-            batch_pos = train_items[idx]
+    def _resolve_source_check_target(self, field_attr: str) -> Optional[Path]:
+        """Returns the Path to actually .exists()-check, or None if unresolvable.
 
-            # Быстрая генерация негативов на GPU
-            batch_neg = torch.randint(0, self.model.num_items, (len(batch_u),), device=self.device)
-
-            optimizer.zero_grad()
-
-            # --- HYBRID FORWARD ---
-            # Передаем item_features в модель
-            user_emb, item_emb = self.model(train_graph.edge_index, item_features)
-
-            u = user_emb[batch_u]
-            p = item_emb[batch_pos]
-            n = item_emb[batch_neg]
-
-            pos_scores = (u * p).sum(dim=1)
-            neg_scores = (u * n).sum(dim=1)
-
-
-            loss, loss_parts = loss_fn(u, p, n, pos_scores, neg_scores)
-
-            # L2 регуляризация теперь внутри optimizer (weight_decay),
-            # но можно добавить и тут, если мало. Пока оставим на оптимизаторе.
-
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            optimizer.step()
-
-            total_loss += loss.item()
-
-            # Обновление прогресс-бара
-            if (batch_idx + 1) % 5 == 0 or (batch_idx + 1) == num_batches:
-                elapsed = time.time() - start_t
-                processed = batch_idx + 1
-                speed = processed / elapsed if elapsed > 0 else 0
-                eta = (num_batches - processed) / speed if speed > 0 else 0
-
-                self.update_queue.put({
-                    'type': 'batch_progress',
-                    'current_batch': processed,
-                    'total_batches': num_batches,
-                    'elapsed_str': f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}",
-                    'eta_str': f"{int(eta // 60):02d}:{int(eta % 60):02d}",
-                    'speed': speed,
-                    'loss': total_loss / processed
-                })
-
-        return total_loss / num_batches
-
-    @torch.no_grad()
-    def evaluate(self, train_graph, test_data, train_matrix, k=10, sample_users=1000, item_features=None):
-        """Валидация с учетом гибридных признаков"""
-        self.model.eval()
-
-        # Получаем эмбеддинги
-        user_emb, item_emb = self.model(train_graph.edge_index, item_features)
-        user_emb = F.normalize(user_emb, p=2, dim=1)
-        item_emb = F.normalize(item_emb, p=2, dim=1)
-
-        test_df = test_data['interactions']
-        user_true = test_df.groupby('user_id')['item_id'].apply(list).to_dict()
-
-        test_users = list(user_true.keys())
-        if len(test_users) > sample_users:
-            eval_users = np.random.choice(test_users, sample_users, replace=False)
+        Empty field + no default → None (Amazon when blank).
+        For dir-inputs (check_file set), returns dir/check_file representative.
+        """
+        meta = _SOURCE_META[field_attr]
+        field: ft.TextField = getattr(self, field_attr)
+        raw = (field.value or "").strip()
+        if raw:
+            base = Path(raw).expanduser()
+        elif meta["default_rel"]:
+            base = PROJECT_ROOT / "data" / meta["default_rel"]
         else:
-            eval_users = test_users
+            return None
+        check_file = meta.get("check_file")
+        return (base / check_file) if check_file else base
 
-        recalls = []
-        ndcgs = []
+    def _update_source_status(self) -> None:
+        """Recompute icon + color for all 5 source-fields."""
+        for field_attr, meta in _SOURCE_META.items():
+            required = meta["required"]
+            icon: ft.Icon = self.source_status_icons[field_attr]
+            target = self._resolve_source_check_target(field_attr)
+            if target is None:
+                # Empty field, no default (Amazon blank) → neutral.
+                icon.name = ft.Icons.REMOVE_CIRCLE_OUTLINE
+                icon.color = COLORS["muted"]
+                icon.tooltip = "Не задано (optional)"
+                continue
+            if target.exists():
+                icon.name = ft.Icons.CHECK_CIRCLE
+                icon.color = COLORS["ok"]
+                icon.tooltip = f"OK: {target}"
+            elif required:
+                icon.name = ft.Icons.CANCEL
+                icon.color = COLORS["err"]
+                icon.tooltip = f"Не найден (required): {target}"
+            else:
+                icon.name = ft.Icons.WARNING_AMBER
+                icon.color = COLORS["warn"]
+                icon.tooltip = f"Не найден (optional): {target}"
 
-        # Батчевая обработка для экономии памяти
-        eval_batch_size = 500
+    def _count_source_overrides(self) -> int:
+        domain = self.domain_dd.value
+        fields: list[ft.TextField] = []
+        if domain in ("movies", "all"):
+            fields += [self.ml_dir_input, self.tmdb_csv_input]
+        if domain in ("tv", "all"):
+            fields += [self.trakt_shows_input, self.trakt_inter_input]
+        fields.append(self.amazon_field)
+        return sum(1 for f in fields if (f.value or "").strip())
 
-        for i in range(0, len(eval_users), eval_batch_size):
-            batch_u_ids = eval_users[i: i + eval_batch_size]
-            batch_u_tensor = torch.tensor(batch_u_ids, device=self.device, dtype=torch.long)
+    def _count_param_overrides(self) -> int:
+        defaults = _PARAM_PRESETS["default"]
+        return sum(
+            1 for name, f in self.param_inputs.items()
+            if (f.value or "").strip() != defaults[name]
+        )
 
-            # Матричное умножение [Batch, Dim] x [Dim, Items] = [Batch, Items]
-            scores = torch.matmul(user_emb[batch_u_tensor], item_emb.t())
+    def _update_titles(self) -> None:
+        n_src = self._count_source_overrides()
+        n_par = self._count_param_overrides()
+        src_suffix = f"  ({n_src} заполнено)" if n_src else ""
+        par_suffix = f"  ({n_par} изменено)" if n_par else ""
+        self.sources_title.value = f"Источники / Sources{src_suffix}"
+        self.params_title.value = f"Параметры / Parameters{par_suffix}"
 
-            for j, u_id in enumerate(batch_u_ids):
-                if u_id not in user_true: continue
+    # ---- preset / params handlers (spec 3.2 + 3.3) ----
 
-                # Исключаем то, что было в train
-                row_indices = train_matrix[u_id].indices
-                train_items = torch.as_tensor(row_indices, device=self.device)
-                scores[j, train_items] = -float('inf')
+    def _on_preset_change(self, e: ft.ControlEvent) -> None:
+        preset = e.control.value
+        if preset == "custom":
+            # Ничего не меняем — пользователь сам редактирует.
+            return
+        values = _PARAM_PRESETS.get(preset)
+        if values is None:
+            return
+        self._preset_silent = True
+        try:
+            for name, val in values.items():
+                self.param_inputs[name].value = val
+        finally:
+            self._preset_silent = False
+        self._update_titles()
+        self.app.page.update()
 
-                # Top-K
-                _, top_k_items = torch.topk(scores[j], k)
-                top_k_items = top_k_items.cpu().numpy()
-                true_items = user_true[u_id]
+    def _on_param_change(self, e: ft.ControlEvent) -> None:
+        # При программном применении preset'а — не сваливаемся в custom,
+        # но title всё равно пересчитываем.
+        if self._preset_silent:
+            return
+        if self.preset_dd.value != "custom":
+            self.preset_dd.value = "custom"
+        self._update_titles()
+        self.app.page.update()
 
-                # Metrics
-                hits = len(set(top_k_items) & set(true_items))
-                recalls.append(hits / min(len(true_items), k))
+    # ---- pre-flight check (spec 3.3.c) ----
 
-                # (NDCG опустим для краткости, Recall важнее)
+    def _preflight_check(self, domain: str) -> list[tuple[str, Path, str]]:
+        """Returns [(field_label, missing_path, help_text)] for Required sources.
 
-        return {'recall@10': np.mean(recalls), 'ndcg@10': 0.0}
+        Movies: ratings.csv, movies.csv, links.csv (все три обязательны —
+        make_dataset.py:312-327 читает без exists() проверки).
+        TV: trakt_shows.csv + trakt_interactions.csv (make_dataset.py:505, 564).
+        """
+        missing: list[tuple[str, Path, str]] = []
 
-def main(page: ft.Page):
-    """Точка входа в приложение"""
-    app = TrainingGUI(page)
+        if domain in ("movies", "all"):
+            raw = (self.ml_dir_input.value or "").strip()
+            ml_root = Path(raw) if raw else (PROJECT_ROOT / "data" / "raw" / "ml-32m")
+            ml_hint = (
+                "Скачайте MovieLens-32M с grouplens.org и распакуйте "
+                "в data/raw/ml-32m/ (подробнее: docs/data_sources.md)"
+            )
+            for fname in ("ratings.csv", "movies.csv", "links.csv"):
+                p = ml_root / fname
+                if not p.exists():
+                    missing.append((f"MovieLens / {fname}", p, ml_hint))
+
+        if domain in ("tv", "all"):
+            trakt_specs = [
+                ("trakt_shows_input", "Trakt shows CSV",
+                 "Запустите trakt_collector (~2 суток) или подключите готовый "
+                 "CSV (schema в docs/data_sources.md)"),
+                ("trakt_inter_input", "Trakt interactions CSV",
+                 "Запустите trakt_collector или подключите готовый CSV "
+                 "(schema в docs/data_sources.md)"),
+            ]
+            for attr, label, hint in trakt_specs:
+                p = self._resolve_source_check_target(attr)
+                if p and not p.exists():
+                    missing.append((label, p, hint))
+
+        return missing
+
+    def _show_missing_sources_banner(
+        self, missing: list[tuple[str, Path, str]],
+    ) -> None:
+        lines: list[ft.Control] = [
+            ft.Text(
+                "❌ Не найдены обязательные источники:",
+                color=COLORS["err"], weight=ft.FontWeight.BOLD, size=14,
+            ),
+        ]
+        for label, path, hint in missing:
+            lines.append(ft.Text(
+                f"  • {label}: {path}",
+                color=COLORS["err"], size=12,
+            ))
+            lines.append(ft.Text(
+                f"    → {hint}", color=COLORS["muted"], size=11,
+            ))
+
+        docs_path = PROJECT_ROOT / "docs" / "data_sources.md"
+        lines.append(
+            ft.TextButton(
+                "Как настроить → docs/data_sources.md",
+                icon=ft.Icons.OPEN_IN_NEW,
+                on_click=lambda _e: _open_in_explorer(docs_path),
+            )
+        )
+
+        self.result_banner.bgcolor = COLORS["err_bg"]
+        self.result_banner.content = ft.Column(lines, spacing=2, tight=True)
+        self.result_banner.visible = True
+
+    def _collect_params(self) -> dict:
+        """Парсинг 8 полей в kwargs для MovieDatasetProcessor.
+
+        Пустое поле → None для Optional-параметров (min_year),
+        либо sentinel _HUGE_INT / 0 / 0.0 для non-Optional, чтобы пайплайн
+        обрабатывал как «без лимита».
+        """
+        raw = {n: (f.value or "").strip() for n, f in self.param_inputs.items()}
+
+        def _int_or(s: str, default: int) -> int:
+            return int(s) if s else default
+
+        def _float_or(s: str, default: float) -> float:
+            return float(s) if s else default
+
+        languages = [t.strip() for t in raw["languages"].split(",") if t.strip()]
+        if not languages:
+            languages = ["en"]
+
+        return {
+            "top_n_movies": _int_or(raw["top_n_movies"], _HUGE_INT),
+            "top_n_tv": _int_or(raw["top_n_tv"], _HUGE_INT),
+            "min_user_interactions": _int_or(raw["min_user_interactions"], 0),
+            "min_item_interactions": _int_or(raw["min_item_interactions"], 0),
+            "rating_threshold": _float_or(raw["rating_threshold"], 0.0),
+            "max_interactions": _int_or(raw["max_interactions"], _HUGE_INT),
+            "min_year": int(raw["min_year"]) if raw["min_year"] else None,
+            "languages": languages,
+        }
+
+    def _on_ml_dir_picked(self, e: ft.FilePickerResultEvent) -> None:
+        if e.path:
+            self.ml_dir_input.value = e.path
+            self._update_titles()
+            self._update_source_status()
+            self.app.page.update()
+
+    def _on_tmdb_csv_picked(self, e: ft.FilePickerResultEvent) -> None:
+        if e.files:
+            self.tmdb_csv_input.value = e.files[0].path
+            self._update_titles()
+            self._update_source_status()
+            self.app.page.update()
+
+    def _on_trakt_shows_picked(self, e: ft.FilePickerResultEvent) -> None:
+        if e.files:
+            self.trakt_shows_input.value = e.files[0].path
+            self._update_titles()
+            self._update_source_status()
+            self.app.page.update()
+
+    def _on_trakt_inter_picked(self, e: ft.FilePickerResultEvent) -> None:
+        if e.files:
+            self.trakt_inter_input.value = e.files[0].path
+            self._update_titles()
+            self._update_source_status()
+            self.app.page.update()
+
+    def _on_amazon_picked(self, e: ft.FilePickerResultEvent) -> None:
+        if e.path:
+            self.amazon_field.value = e.path
+            self._update_titles()
+            self._update_source_status()
+            self.app.page.update()
+
+    def _picker_initial_dir(self, current_value: str | None, default: Path) -> Path:
+        # Если поле непустое и путь существует — стартуем от него (или родителя
+        # если это файл/нет). Иначе walk-up от дефолта (data/raw/...).
+        raw = (current_value or "").strip()
+        candidate = Path(raw).expanduser() if raw else default
+        return _first_existing_ancestor(candidate, PROJECT_ROOT / "data")
+
+    def _on_build(self, e: ft.ControlEvent) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+
+        domain = self.domain_dd.value
+
+        # spec 3.3.c — pre-flight check Required sources; build не стартует если есть пропуски.
+        missing = self._preflight_check(domain)
+        if missing:
+            self._show_missing_sources_banner(missing)
+            self.app.page.update()
+            return
+
+        name = (self.name_input.value or "").strip() or None
+        amazon_raw = (self.amazon_field.value or "").strip()
+        amazon_dir = Path(amazon_raw) if amazon_raw else None
+
+        def _opt_path(field: ft.TextField) -> Optional[Path]:
+            v = (field.value or "").strip()
+            return Path(v) if v else None
+
+        ml_dir = _opt_path(self.ml_dir_input)
+        tmdb_csv = _opt_path(self.tmdb_csv_input)
+        trakt_shows = _opt_path(self.trakt_shows_input)
+        trakt_inter = _opt_path(self.trakt_inter_input)
+
+        try:
+            params = self._collect_params()
+        except ValueError as exc:
+            self._add_log(f"❌ Невалидный параметр: {exc}", COLORS["err"])
+            self.app.page.update()
+            return
+
+        self.build_btn.disabled = True
+        self.domain_dd.disabled = True
+        self.amazon_field.disabled = True
+        self.name_input.disabled = True
+        self.preset_dd.disabled = True
+        for f in self.param_inputs.values():
+            f.disabled = True
+        self.progress_bar.value = None  # indeterminate
+        self.status_text.value = "Запуск сборки..."
+        self.result_banner.visible = False
+        self.open_folder_btn.visible = False
+        self.log_view.controls.clear()
+        self._add_log(
+            f"🛠 Старт сборки (domain={domain}, name={name or 'default'}, "
+            f"amazon_dir={amazon_dir or '—'})",
+            COLORS["primary"],
+        )
+        self._add_log(
+            f"  preset={self.preset_dd.value}, "
+            f"top_n=({params['top_n_movies']}/{params['top_n_tv']}), "
+            f"min_user/item=({params['min_user_interactions']}/"
+            f"{params['min_item_interactions']}), "
+            f"rating≥{params['rating_threshold']}, "
+            f"max_interactions={params['max_interactions']}, "
+            f"min_year={params['min_year']}, languages={params['languages']}",
+            COLORS["muted"],
+        )
+        if any((ml_dir, tmdb_csv, trakt_shows, trakt_inter)):
+            self._add_log(
+                f"  overrides: ml={ml_dir or '—'}, tmdb={tmdb_csv or '—'}, "
+                f"trakt_shows={trakt_shows or '—'}, "
+                f"trakt_inter={trakt_inter or '—'}",
+                COLORS["muted"],
+            )
+        self.app.page.update()
+
+        self._thread = threading.Thread(
+            target=self._run_build,
+            args=(domain, name, amazon_dir, ml_dir, tmdb_csv,
+                  trakt_shows, trakt_inter, params),
+            daemon=True,
+        )
+        self._thread.start()
+        self.app.page.run_task(self._process_updates)
+
+    def _on_open_folder(self, e: ft.ControlEvent) -> None:
+        domain = self.domain_dd.value
+        name = (self.name_input.value or "").strip()
+        if name:
+            target = PROJECT_ROOT / "data" / "processed" / name
+        elif domain in ("movies", "tv"):
+            target = PROJECT_ROOT / "data" / "processed" / domain
+        else:
+            target = PROJECT_ROOT / "data" / "processed"
+        _open_in_explorer(target)
+
+    # ---- worker thread ----
+
+    def _run_build(
+        self,
+        domain: str,
+        name: Optional[str],
+        amazon_dir: Optional[Path],
+        ml_dir: Optional[Path],
+        tmdb_csv: Optional[Path],
+        trakt_shows: Optional[Path],
+        trakt_inter: Optional[Path],
+        params: dict,
+    ) -> None:
+        gui_handler = _QueueLogHandler(self._update_q)
+        gui_handler.setLevel(logging.INFO)
+        gui_handler.setFormatter(
+            logging.Formatter("%(asctime)s | %(levelname)s | %(message)s",
+                              datefmt="%H:%M:%S")
+        )
+
+        from recommendation_system.data import make_dataset as md
+        md.logger.addHandler(gui_handler)
+        try:
+            config_path = (
+                PROJECT_ROOT / "src" / "recommendation_system"
+                / "models" / "gnn" / "config" / "genre_map.json"
+            )
+            data_dir = PROJECT_ROOT / "data"
+
+            built: list[str] = []
+            # Для domain='all' имя пользователя действует только если оба
+            # домена пишутся в одну папку — что не имеет смысла. Поэтому при
+            # 'all' игнорируем custom name и используем дефолтные movies/tv.
+            single_name_ok = domain in ("movies", "tv")
+
+            if domain in ("movies", "all"):
+                target_subdir = name if (single_name_ok and name) else "movies"
+                processor = md.MovieDatasetProcessor(
+                    data_dir=data_dir,
+                    config_path=str(config_path),
+                    output_subdir=target_subdir,
+                    ml_dir=ml_dir,
+                    tmdb_csv=tmdb_csv,
+                    **params,
+                )
+                self._update_q.put({"type": "stage",
+                                    "text": f"Сборка movies → {target_subdir}..."})
+                ok_m = processor.build_movie_dataset(amazon_dir=amazon_dir)
+                if not ok_m:
+                    self._update_q.put({"type": "done", "rc": 1,
+                                        "built": built, "stage_fail": "movies"})
+                    return
+                built.append(target_subdir)
+
+            if domain in ("tv", "all"):
+                target_subdir = name if (single_name_ok and name) else "tv"
+                processor = md.MovieDatasetProcessor(
+                    data_dir=data_dir,
+                    config_path=str(config_path),
+                    output_subdir=target_subdir,
+                    trakt_shows_csv=trakt_shows,
+                    trakt_interactions_csv=trakt_inter,
+                    **params,
+                )
+                self._update_q.put({"type": "stage",
+                                    "text": f"Сборка tv → {target_subdir}..."})
+                ok_t = processor.build_tv_dataset(amazon_dir=amazon_dir)
+                if not ok_t:
+                    self._update_q.put({"type": "done", "rc": 1,
+                                        "built": built, "stage_fail": "tv"})
+                    return
+                built.append(target_subdir)
+
+            self._update_q.put({"type": "done", "rc": 0, "built": built})
+        except Exception:
+            self._update_q.put({"type": "error", "tb": traceback.format_exc()})
+        finally:
+            md.logger.removeHandler(gui_handler)
+
+    async def _process_updates(self) -> None:
+        while self._thread is not None and self._thread.is_alive():
+            self._drain_queue()
+            await asyncio.sleep(0.1)
+        self._drain_queue()
+        self.build_btn.disabled = False
+        self.domain_dd.disabled = False
+        self.amazon_field.disabled = False
+        self.name_input.disabled = False
+        self.preset_dd.disabled = False
+        for f in self.param_inputs.values():
+            f.disabled = False
+        if self.progress_bar.value is None:
+            self.progress_bar.value = 0
+        self.app.page.update()
+
+    def _drain_queue(self) -> None:
+        drained = False
+        try:
+            while True:
+                msg = self._update_q.get_nowait()
+                self._handle_message(msg)
+                drained = True
+        except queue.Empty:
+            pass
+        if drained:
+            self.app.page.update()
+
+    def _handle_message(self, msg: dict) -> None:
+        kind = msg.get("type")
+        if kind == "logger":
+            self._add_log(msg["text"], msg.get("color") or ft.Colors.GREY_700)
+        elif kind == "stage":
+            self.status_text.value = msg["text"]
+            self._add_log(f"▶ {msg['text']}", COLORS["primary"])
+        elif kind == "done":
+            self.progress_bar.value = 1.0
+            built: list[str] = msg.get("built") or []
+            stage_fail = msg.get("stage_fail")
+
+            if msg["rc"] == 0 and built:
+                # Sanity-check каждого собранного домена.
+                all_ok = True
+                fail_lines: list[str] = []
+                for d in built:
+                    ok, failures = _dataset_sanity(d)
+                    if not ok:
+                        all_ok = False
+                        for f in failures:
+                            fail_lines.append(f"[{d}] {f}")
+
+                if all_ok:
+                    self.result_banner.bgcolor = COLORS["ok_bg"]
+                    self.result_banner.content = ft.Text(
+                        f"✅ Собрано: {', '.join(built)}. Sanity-check пройден.",
+                        color=COLORS["ok"], weight=ft.FontWeight.BOLD,
+                    )
+                    self.status_text.value = "Готово"
+                    self._add_log(
+                        f"✅ Сборка завершена. Sanity: OK для {', '.join(built)}",
+                        COLORS["ok"],
+                    )
+                else:
+                    self.result_banner.bgcolor = COLORS["err_bg"]
+                    self.result_banner.content = ft.Text(
+                        f"⚠ Собрано: {', '.join(built)}. Sanity-check ПРОВАЛЕН:\n"
+                        + "\n".join(fail_lines),
+                        color=COLORS["err"], weight=ft.FontWeight.BOLD,
+                    )
+                    self.status_text.value = "Sanity FAIL"
+                    for line in fail_lines:
+                        self._add_log(f"❌ {line}", COLORS["err"])
+            else:
+                where = f" на этапе {stage_fail}" if stage_fail else ""
+                self.result_banner.bgcolor = COLORS["err_bg"]
+                self.result_banner.content = ft.Text(
+                    f"❌ Сборка завершилась ошибкой{where} (см. логи).",
+                    color=COLORS["err"], weight=ft.FontWeight.BOLD,
+                )
+                self.status_text.value = "Ошибка"
+                self._add_log(f"❌ Сборка прервана{where}", COLORS["err"])
+
+            self.result_banner.visible = True
+            self.open_folder_btn.visible = True
+
+            # Обновить Tab 4 чтобы пользователь сразу увидел новые mtime / числа.
+            try:
+                self.app.data_tab.refresh()
+            except Exception:
+                pass
+        elif kind == "error":
+            self._add_log("❌ Exception:\n" + msg["tb"], COLORS["err"])
+            self.result_banner.bgcolor = COLORS["err_bg"]
+            self.result_banner.content = ft.Text(
+                "❌ Необработанное исключение (см. логи)",
+                color=COLORS["err"], weight=ft.FontWeight.BOLD,
+            )
+            self.result_banner.visible = True
+            self.status_text.value = "Ошибка"
+
+    def _add_log(self, text: str, color) -> None:
+        self.log_view.controls.append(
+            ft.Text(text, size=12, color=color, selectable=True, font_family="Consolas")
+        )
+        if len(self.log_view.controls) > 500:
+            del self.log_view.controls[: len(self.log_view.controls) - 500]
+
+
+# ======================================================================
+# Tab 4 — Data (readonly per-domain stats)
+# ======================================================================
+
+
+@dataclass
+class DomainStats:
+    domain: str
+    dataset_dir: Path
+    models_dir: Path
+    dataset_exists: bool
+    interactions_mtime: Optional[datetime] = None
+    items_mtime: Optional[datetime] = None
+    num_users: Optional[int] = None
+    num_items: Optional[int] = None
+    num_interactions: Optional[int] = None
+    last_train_at: Optional[str] = None
+    last_train_recall: Optional[float] = None
+    last_train_checkpoint: Optional[str] = None
+    last_train_sanity_ok: Optional[bool] = None
+
+
+def _collect_domain_stats(domain: str) -> DomainStats:
+    dataset_dir = PROJECT_ROOT / "data" / "processed" / domain
+    models_dir = PROJECT_ROOT / "models" / domain
+
+    interactions_path = dataset_dir / "interactions_final.parquet"
+    items_path = dataset_dir / "items_metadata_final.parquet"
+    mapping_path = dataset_dir / "id_mapping.json"
+
+    if not (interactions_path.exists() and items_path.exists() and mapping_path.exists()):
+        return DomainStats(
+            domain=domain,
+            dataset_dir=dataset_dir,
+            models_dir=models_dir,
+            dataset_exists=False,
+        )
+
+    interactions_mtime = datetime.fromtimestamp(interactions_path.stat().st_mtime)
+    items_mtime = datetime.fromtimestamp(items_path.stat().st_mtime)
+
+    num_users = None
+    num_items = None
+    try:
+        with open(mapping_path, encoding="utf-8") as f:
+            mapping = json.load(f)
+        num_users = mapping.get("num_users")
+        # Prefer total catalog count; fall back to trained subset.
+        num_items = mapping.get("num_items") or mapping.get("num_trained_items")
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    num_interactions = None
+    try:
+        import pyarrow.parquet as pq
+        num_interactions = pq.ParquetFile(interactions_path).metadata.num_rows
+    except Exception:
+        try:
+            import pandas as pd
+            num_interactions = len(pd.read_parquet(interactions_path, columns=["user_id"]))
+        except Exception:
+            pass
+
+    last_train_at = None
+    last_train_recall = None
+    last_train_checkpoint = None
+    last_train_sanity_ok = None
+    if models_dir.exists():
+        sidecars = sorted(
+            models_dir.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for sc in sidecars:
+            try:
+                with open(sc, encoding="utf-8") as f:
+                    s = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if s.get("domain") != domain:
+                continue
+            last_train_at = s.get("trained_at")
+            metrics = s.get("metrics") or {}
+            recall = metrics.get("recall@10")
+            if isinstance(recall, (int, float)):
+                last_train_recall = float(recall)
+            last_train_checkpoint = s.get("checkpoint")
+            sanity = s.get("sanity_check") or {}
+            sanity_passed = sanity.get("passed")
+            if isinstance(sanity_passed, bool):
+                last_train_sanity_ok = sanity_passed
+            break
+
+    return DomainStats(
+        domain=domain,
+        dataset_dir=dataset_dir,
+        models_dir=models_dir,
+        dataset_exists=True,
+        interactions_mtime=interactions_mtime,
+        items_mtime=items_mtime,
+        num_users=num_users,
+        num_items=num_items,
+        num_interactions=num_interactions,
+        last_train_at=last_train_at,
+        last_train_recall=last_train_recall,
+        last_train_checkpoint=last_train_checkpoint,
+        last_train_sanity_ok=last_train_sanity_ok,
+    )
+
+
+class DataTab:
+    """Read-only dashboard: per-domain dataset + last-train state."""
+
+    def __init__(self, app: "TrainerGuiApp") -> None:
+        self.app = app
+        self._build()
+        self.refresh()
+
+    def build(self) -> ft.Control:
+        return self._root
+
+    def refresh(self) -> None:
+        self._movies_card.content = self._build_card(_collect_domain_stats("movies"))
+        self._tv_card.content = self._build_card(_collect_domain_stats("tv"))
+
+    def _build(self) -> None:
+        self._movies_card = ft.Container(
+            padding=16, bgcolor=ft.Colors.WHITE, border_radius=8,
+            border=ft.border.all(1, COLORS["card_border"]),
+            expand=True,
+        )
+        self._tv_card = ft.Container(
+            padding=16, bgcolor=ft.Colors.WHITE, border_radius=8,
+            border=ft.border.all(1, COLORS["card_border"]),
+            expand=True,
+        )
+
+        header = ft.Row(
+            [
+                ft.Text(
+                    "Состояние датасетов и моделей",
+                    size=18,
+                    weight=ft.FontWeight.BOLD,
+                    color=COLORS["primary"],
+                ),
+                ft.Container(expand=True),
+                ft.IconButton(
+                    ft.Icons.REFRESH,
+                    tooltip="Обновить",
+                    on_click=self._on_refresh,
+                ),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self._root = ft.Container(
+            content=ft.Column(
+                [
+                    header,
+                    ft.Row(
+                        [self._movies_card, self._tv_card],
+                        spacing=16,
+                        vertical_alignment=ft.CrossAxisAlignment.START,
+                    ),
+                ],
+                spacing=16,
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            padding=16,
+        )
+
+    def _on_refresh(self, e: ft.ControlEvent) -> None:
+        self.refresh()
+        self.app.page.update()
+
+    def _build_card(self, stats: DomainStats) -> ft.Control:
+        title = "🎬 Movies" if stats.domain == "movies" else "📺 TV"
+        title_row = ft.Text(title, size=20, weight=ft.FontWeight.BOLD,
+                            color=COLORS["primary"])
+
+        if not stats.dataset_exists:
+            return ft.Column(
+                [
+                    title_row,
+                    ft.Divider(height=4),
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.WARNING_AMBER, color=COLORS["warn"]),
+                            ft.Text("Датасет не создан",
+                                    color=COLORS["warn"],
+                                    weight=ft.FontWeight.W_500),
+                        ],
+                        spacing=6,
+                    ),
+                    ft.Text(
+                        f"Ожидается: {stats.dataset_dir}",
+                        size=12,
+                        color=COLORS["muted"],
+                        selectable=True,
+                    ),
+                    ft.Text(
+                        "Создайте датасет на вкладке «Создание датасета».",
+                        size=12, italic=True, color=COLORS["muted"],
+                    ),
+                    ft.Container(expand=True),
+                    ft.OutlinedButton(
+                        "Открыть папку",
+                        icon=ft.Icons.FOLDER_OPEN,
+                        on_click=lambda _e: _open_in_explorer(stats.dataset_dir.parent),
+                    ),
+                ],
+                spacing=8,
+            )
+
+        dataset_rows = ft.Column(
+            [
+                _stat_row("Users", _fmt_int(stats.num_users)),
+                _stat_row("Items", _fmt_int(stats.num_items)),
+                _stat_row("Interactions", _fmt_int(stats.num_interactions)),
+                _stat_row("interactions mtime", _fmt_mtime(stats.interactions_mtime)),
+                _stat_row("items mtime", _fmt_mtime(stats.items_mtime)),
+            ],
+            spacing=4,
+        )
+
+        train_block = self._build_train_block(stats)
+
+        return ft.Column(
+            [
+                title_row,
+                ft.Divider(height=4),
+                ft.Text("Датасет", size=13, weight=ft.FontWeight.W_500,
+                        color=COLORS["muted"]),
+                dataset_rows,
+                ft.Divider(height=4),
+                ft.Text("Последняя тренировка", size=13, weight=ft.FontWeight.W_500,
+                        color=COLORS["muted"]),
+                train_block,
+                ft.Container(expand=True),
+                ft.Row(
+                    [
+                        ft.OutlinedButton(
+                            "Папка датасета",
+                            icon=ft.Icons.FOLDER_OPEN,
+                            on_click=lambda _e: _open_in_explorer(stats.dataset_dir),
+                        ),
+                        ft.OutlinedButton(
+                            "Папка моделей",
+                            icon=ft.Icons.MODEL_TRAINING,
+                            on_click=lambda _e: _open_in_explorer(stats.models_dir)
+                            if stats.models_dir.exists() else None,
+                            disabled=not stats.models_dir.exists(),
+                        ),
+                    ],
+                    spacing=8,
+                ),
+            ],
+            spacing=8,
+        )
+
+    def _build_train_block(self, stats: DomainStats) -> ft.Control:
+        if stats.last_train_at is None:
+            return ft.Row(
+                [
+                    ft.Icon(ft.Icons.INFO_OUTLINE, color=COLORS["muted"], size=16),
+                    ft.Text("Sidecar не найден — модель не обучалась локально",
+                            color=COLORS["muted"], size=13),
+                ],
+                spacing=4,
+            )
+
+        sanity_chip: list = []
+        if stats.last_train_sanity_ok is True:
+            sanity_chip = [ft.Icon(ft.Icons.CHECK_CIRCLE, color=COLORS["ok"], size=16),
+                           ft.Text("sanity OK", color=COLORS["ok"], size=12)]
+        elif stats.last_train_sanity_ok is False:
+            sanity_chip = [ft.Icon(ft.Icons.ERROR_OUTLINE, color=COLORS["err"], size=16),
+                           ft.Text("sanity FAIL", color=COLORS["err"], size=12)]
+
+        rows: list[ft.Control] = [
+            _stat_row("trained at", _fmt_iso(stats.last_train_at)),
+            _stat_row("checkpoint", stats.last_train_checkpoint or "—"),
+            _stat_row("recall@10",
+                      f"{stats.last_train_recall:.4f}"
+                      if stats.last_train_recall is not None else "—"),
+        ]
+        if sanity_chip:
+            rows.append(ft.Row(sanity_chip, spacing=4))
+        return ft.Column(rows, spacing=4)
+
+
+def _stat_row(label: str, value: str) -> ft.Control:
+    return ft.Row(
+        [
+            ft.Text(label, size=13, color=COLORS["muted"], width=160),
+            ft.Text(value, size=13, weight=ft.FontWeight.W_500, selectable=True),
+        ],
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+
+def _fmt_int(n: Optional[int]) -> str:
+    return f"{n:,}" if isinstance(n, int) else "—"
+
+
+def _fmt_mtime(mt: Optional[datetime]) -> str:
+    return mt.strftime("%Y-%m-%d %H:%M") if mt else "—"
+
+
+def _fmt_iso(iso: Optional[str]) -> str:
+    if not iso:
+        return "—"
+    try:
+        # ISO with timezone (e.g. ...+00:00) → drop timezone for display.
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError):
+        return iso
+
+
+# ======================================================================
+# Helpers
+# ======================================================================
+
+
+def _hp_field(label: str, default: str) -> ft.TextField:
+    return ft.TextField(label=label, value=default, width=120, text_size=14, dense=True)
+
+
+def _metric_card(title: str, value_control: ft.Control) -> ft.Control:
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Text(title, size=11, color=COLORS["muted"]),
+                value_control,
+            ],
+            spacing=2,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        padding=12,
+        border_radius=8,
+        bgcolor=ft.Colors.WHITE,
+        border=ft.border.all(1, COLORS["card_border"]),
+        expand=True,
+    )
+
+
+def _placeholder(title: str, description: str) -> ft.Control:
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Text(title, size=18, weight=ft.FontWeight.BOLD, color=COLORS["primary"]),
+                ft.Text(description, size=14, color=COLORS["muted"]),
+                ft.Text(
+                    "(будет реализовано на следующих этапах)",
+                    size=12, italic=True, color=COLORS["muted"],
+                ),
+            ],
+            spacing=8,
+        ),
+        padding=24,
+        bgcolor=COLORS["primary_bg"],
+        border_radius=8,
+        margin=ft.margin.symmetric(vertical=12),
+    )
+
+
+def _open_in_explorer(path: Path) -> None:
+    try:
+        if os.name == "nt":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif os.name == "posix":
+            import subprocess
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception:
+        pass
+
+
+# ======================================================================
+# Tab 3 — Inference (DualDomainEngine offline tester)
+# ======================================================================
+
+
+_FAISS_INDEX = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index" / "catalog.faiss"
+_FAISS_META = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index" / "catalog_meta.json"
+_CACHE_DIR = PROJECT_ROOT / "data" / "processed" / "cache"
+
+
+def _display_title(item, lang: str) -> str:
+    """Pick localized title field; fall back to default `title` if missing."""
+    if lang == "ru":
+        return getattr(item, "title_ru", None) or item.title
+    if lang == "uk":
+        return getattr(item, "title_uk", None) or item.title
+    return item.title
+
+
+def _discover_checkpoints(domain: str) -> list[str]:
+    """List `.pt` files in models/{domain}/ sorted by mtime descending."""
+    models_dir = PROJECT_ROOT / "models" / domain
+    if not models_dir.exists():
+        return []
+    files = list(models_dir.glob("*.pt"))
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [p.name for p in files]
+
+
+def _discover_datasets() -> list[str]:
+    """List data/processed/* subfolders that contain a full built dataset
+    (parquet pair + id_mapping.json). Sorted alphabetically for stability."""
+    base = PROJECT_ROOT / "data" / "processed"
+    if not base.exists():
+        return []
+    out: list[str] = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        if (
+            (child / "interactions_final.parquet").exists()
+            and (child / "items_metadata_final.parquet").exists()
+            and (child / "id_mapping.json").exists()
+        ):
+            out.append(child.name)
+    return out
+
+
+class InferenceTab:
+    """
+    Offline 'bot in a window' for testing the DualDomainEngine router with
+    domain separation. Search → ★ Favorites → 4 recs buttons (movie/tv/all/cross).
+
+    Engines load lazily on the first recs click (30-60s) to avoid blocking
+    GUI startup; until then the tab is fully usable for browsing/wiring.
+    """
+
+    def __init__(self, app: "TrainerGuiApp") -> None:
+        self.app = app
+        self.router = None  # DualDomainEngine | None — lazy
+        self.movies_engine = None  # UniversalSearchEngine | None
+        self.tv_engine = None  # UniversalSearchEngine | None
+        # None = «latest» (sidecar fallback chain). Иначе — имя .pt файла внутри models/{domain}/.
+        self.movies_checkpoint_override: Optional[str] = None
+        self.tv_checkpoint_override: Optional[str] = None
+        self.favorites: list[tuple[int, str, str]] = []  # (tmdb_id, title, media_type)
+        self.last_results: list = []  # last list[UniversalMediaItem] for relang re-render
+        self._thread: threading.Thread | None = None
+        self._update_q: queue.Queue = queue.Queue()
+        self._faiss_available = _FAISS_INDEX.exists() and _FAISS_META.exists()
+        self._build()
+
+    def build(self) -> ft.Control:
+        return self._root
+
+    # ---- UI ----
+
+    def _build(self) -> None:
+        self.scope_dd = ft.Dropdown(
+            label="Каталог для поиска",
+            value="movies",
+            options=[
+                ft.dropdown.Option("movies", "Movies"),
+                ft.dropdown.Option("tv", "TV"),
+            ],
+            width=180,
+            on_change=lambda _e: None,
+        )
+        self.lang_dd = ft.Dropdown(
+            label="Язык названий",
+            value="en",
+            options=[
+                ft.dropdown.Option("en", "English"),
+                ft.dropdown.Option("ru", "Русский"),
+                ft.dropdown.Option("uk", "Українська"),
+            ],
+            width=160,
+            on_change=self._on_lang_change,
+        )
+        self.cross_target_dd = ft.Dropdown(
+            label="Cross target",
+            value="tv",
+            options=[
+                ft.dropdown.Option("movie", "→ Movies"),
+                ft.dropdown.Option("tv", "→ TV"),
+            ],
+            width=140,
+        )
+
+        # Model pickers per domain. "__latest__" = существующий fallback chain
+        # (latest sidecar → v4.pt). Любой другой выбор = override, имя файла.
+        movies_ckpts = _discover_checkpoints("movies")
+        tv_ckpts = _discover_checkpoints("tv")
+        self.movies_ckpt_dd = ft.Dropdown(
+            label="Movies model",
+            value="__latest__",
+            options=[ft.dropdown.Option("__latest__", "latest (sidecar)")]
+                    + [ft.dropdown.Option(name, name) for name in movies_ckpts],
+            width=240,
+            on_change=lambda e: self._on_ckpt_change("movies", e),
+        )
+        self.tv_ckpt_dd = ft.Dropdown(
+            label="TV model",
+            value="__latest__",
+            options=[ft.dropdown.Option("__latest__", "latest (sidecar)")]
+                    + [ft.dropdown.Option(name, name) for name in tv_ckpts],
+            width=240,
+            on_change=lambda e: self._on_ckpt_change("tv", e),
+        )
+
+        self.search_field = ft.TextField(
+            label="Поиск (bilingual RU/UK/EN)",
+            hint_text="например: Inception, Володар Перснів, Игра престолов",
+            on_submit=self._on_search,
+            expand=True,
+            dense=True,
+        )
+        self.search_btn = ft.IconButton(
+            ft.Icons.SEARCH, on_click=self._on_search, tooltip="Найти",
+        )
+
+        self.search_results_list = ft.ListView(spacing=4, padding=4, expand=True)
+        self.favorites_list = ft.ListView(spacing=4, padding=4, expand=True)
+        self.recs_list = ft.ListView(spacing=6, padding=4, expand=True, auto_scroll=False)
+
+        self.recs_movie_btn = ft.ElevatedButton(
+            "/recs_movie", icon=ft.Icons.MOVIE,
+            on_click=lambda _e: self._on_recs("movie"),
+            bgcolor=COLORS["primary"], color=ft.Colors.WHITE,
+        )
+        self.recs_tv_btn = ft.ElevatedButton(
+            "/recs_tv", icon=ft.Icons.TV,
+            on_click=lambda _e: self._on_recs("tv"),
+            bgcolor=COLORS["primary"], color=ft.Colors.WHITE,
+        )
+        self.recs_all_btn = ft.ElevatedButton(
+            "/recs_all", icon=ft.Icons.APPS,
+            on_click=lambda _e: self._on_recs("all"),
+            bgcolor=COLORS["primary"], color=ft.Colors.WHITE,
+        )
+        self.recs_cross_btn = ft.ElevatedButton(
+            "/recs_cross", icon=ft.Icons.SWAP_HORIZ,
+            on_click=lambda _e: self._on_recs("cross"),
+            bgcolor=COLORS["accent"], color=ft.Colors.WHITE,
+            disabled=not self._faiss_available,
+            tooltip=(
+                None if self._faiss_available
+                else "FAISS catalog not found — запустите "
+                     "`compute_embeddings --to-faiss`"
+            ),
+        )
+
+        self.status_text = ft.Text("Готов к работе", size=13, color=COLORS["muted"])
+        self.router_status = ft.Text(
+            "⏳ Движки не загружены (загрузятся по первому /recs_*)",
+            size=12, color=COLORS["muted"], italic=True,
+        )
+
+        self.faiss_banner = ft.Container(visible=not self._faiss_available)
+        if not self._faiss_available:
+            self.faiss_banner.content = ft.Text(
+                "⚠ FAISS catalog отсутствует — /recs_cross недоступен. "
+                "Соберите индекс: python -m recommendation_system.models.gnn."
+                "compute_embeddings --to-faiss",
+                color=COLORS["warn"], size=12,
+            )
+            self.faiss_banner.bgcolor = ft.Colors.AMBER_50
+            self.faiss_banner.padding = 8
+            self.faiss_banner.border_radius = 6
+
+        search_row = ft.Row(
+            [self.scope_dd, self.search_field, self.search_btn],
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.END,
+        )
+
+        recs_row = ft.Row(
+            [
+                self.recs_movie_btn,
+                self.recs_tv_btn,
+                self.recs_all_btn,
+                self.recs_cross_btn,
+                self.cross_target_dd,
+                ft.Container(expand=True),
+                self.lang_dd,
+            ],
+            spacing=8,
+            wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        left_col = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Поиск", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    search_row,
+                    ft.Container(
+                        content=self.search_results_list,
+                        bgcolor=ft.Colors.GREY_50,
+                        border=ft.border.all(1, COLORS["card_border"]),
+                        border_radius=6,
+                        height=200,
+                    ),
+                    ft.Text("Избранное (seed)", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    ft.Container(
+                        content=self.favorites_list,
+                        bgcolor=ft.Colors.GREY_50,
+                        border=ft.border.all(1, COLORS["card_border"]),
+                        border_radius=6,
+                        height=180,
+                    ),
+                ],
+                spacing=8,
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            expand=2,
+        )
+
+        models_row = ft.Row(
+            [self.movies_ckpt_dd, self.tv_ckpt_dd],
+            spacing=8, wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.END,
+        )
+
+        right_col = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Чекпоинты моделей", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    models_row,
+                    ft.Text("Рекомендации", size=14, weight=ft.FontWeight.W_500,
+                            color=COLORS["muted"]),
+                    recs_row,
+                    self.faiss_banner,
+                    ft.Container(
+                        content=self.recs_list,
+                        bgcolor=ft.Colors.GREY_50,
+                        border=ft.border.all(1, COLORS["card_border"]),
+                        border_radius=6,
+                        height=350,
+                    ),
+                    self.status_text,
+                    self.router_status,
+                ],
+                spacing=8,
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+            ),
+            expand=3,
+        )
+
+        self._root = ft.Container(
+            content=ft.Row(
+                [left_col, right_col],
+                spacing=16,
+                expand=True,
+                vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
+            padding=16,
+        )
+
+    # ---- handlers ----
+
+    def _on_search(self, e) -> None:
+        if not self.search_field.value:
+            return
+        query = self.search_field.value.strip()
+        scope = self.scope_dd.value
+
+        # Search requires a loaded engine; if not yet, kick off router load
+        # and tell the user to retry.
+        if scope == "movies" and self.movies_engine is None:
+            self._trigger_router_load(after="search-retry")
+            return
+        if scope == "tv" and self.tv_engine is None:
+            self._trigger_router_load(after="search-retry")
+            return
+
+        engine = self.movies_engine if scope == "movies" else self.tv_engine
+        try:
+            res = engine.search(query, limit=20)
+            items = list(res.results)
+        except Exception as exc:
+            self._set_status(f"Ошибка поиска: {exc}", COLORS["err"])
+            return
+
+        self.search_results_list.controls.clear()
+        if not items:
+            self.search_results_list.controls.append(
+                ft.Text("(ничего не найдено)", size=12,
+                        color=COLORS["muted"], italic=True),
+            )
+        else:
+            for it in items:
+                self.search_results_list.controls.append(self._build_search_row(it))
+        self._set_status(f"Найдено: {len(items)}", COLORS["muted"])
+        self.app.page.update()
+
+    def _on_ckpt_change(self, domain: str, e) -> None:
+        value = e.control.value
+        override = None if value == "__latest__" else value
+        if domain == "movies":
+            self.movies_checkpoint_override = override
+        else:
+            self.tv_checkpoint_override = override
+        # Если движки уже загружены — пометить, что для применения нужен restart.
+        if self.router is not None:
+            self.router_status.value = (
+                "⚠ Чекпоинт изменён — перезапустите GUI, чтобы применить "
+                "(hot-swap не поддерживается)"
+            )
+            self.router_status.color = COLORS["warn"]
+            self.app.page.update()
+
+    def _on_lang_change(self, e) -> None:
+        # Re-render current results + favorites + search list with the new lang.
+        self._render_recs(self.last_results)
+        self._rebuild_favorites()
+        # Search-result list rebuild requires the source items, which we
+        # didn't keep; skip until the user re-runs the search.
+        self.app.page.update()
+
+    def _on_recs(self, scope: str) -> None:
+        if not self.favorites:
+            self._set_status("Сначала добавьте элементы в избранное (★)", COLORS["warn"])
+            return
+
+        if self.router is None:
+            self._trigger_router_load(after=("recs", scope))
+            return
+
+        if self._thread is not None and self._thread.is_alive():
+            return
+
+        self._toggle_buttons(False)
+        self._set_status(f"Запрос {scope}...", COLORS["muted"])
+        self.app.page.update()
+
+        self._thread = threading.Thread(
+            target=self._run_recs, args=(scope,), daemon=True,
+        )
+        self._thread.start()
+        self.app.page.run_task(self._process_updates)
+
+    def _trigger_router_load(self, after) -> None:
+        """First-time engine build. Heavy (~30-60s). `after` is what to do
+        once loaded — `"search-retry"` or `("recs", scope)`."""
+        if self._thread is not None and self._thread.is_alive():
+            return
+
+        self._toggle_buttons(False)
+        self.router_status.value = "⏳ Загрузка движков (30-60с)..."
+        self.router_status.color = COLORS["primary"]
+        self.app.page.update()
+
+        self._thread = threading.Thread(
+            target=self._run_router_load, args=(after,), daemon=True,
+        )
+        self._thread.start()
+        self.app.page.run_task(self._process_updates)
+
+    def _add_to_favorites(self, item) -> None:
+        tid = int(item.tmdb_id)
+        if any(t == tid for t, _, _ in self.favorites):
+            return
+        self.favorites.append((tid, item.title, str(item.media_type)))
+        self._rebuild_favorites()
+        self.app.page.update()
+
+    def _remove_favorite(self, tmdb_id: int) -> None:
+        self.favorites = [(t, ti, mt) for t, ti, mt in self.favorites if t != tmdb_id]
+        self._rebuild_favorites()
+        self.app.page.update()
+
+    def _rebuild_favorites(self) -> None:
+        self.favorites_list.controls.clear()
+        if not self.favorites:
+            self.favorites_list.controls.append(
+                ft.Text("(пусто — добавьте через поиск)", size=12,
+                        color=COLORS["muted"], italic=True),
+            )
+            return
+        for tid, title, mt in self.favorites:
+            badge = "🎬" if mt == "movie" else "📺"
+            self.favorites_list.controls.append(
+                ft.Row(
+                    [
+                        ft.Text(f"{badge} {title}", size=12, expand=True,
+                                no_wrap=False),
+                        ft.Text(f"tmdb={tid}", size=10, color=COLORS["muted"]),
+                        ft.IconButton(
+                            ft.Icons.CLOSE, icon_size=14,
+                            tooltip="Убрать из избранного",
+                            on_click=lambda _e, t=tid: self._remove_favorite(t),
+                        ),
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+            )
+
+    # ---- worker threads ----
+
+    def _run_router_load(self, after) -> None:
+        try:
+            from recommendation_system.models.gnn.inference_engine import InferenceEngine
+            from recommendation_system.models.gnn.universal_search import UniversalSearchEngine
+            from recommendation_system.models.gnn.dual_domain_engine import DualDomainEngine
+            from recommendation_system.models.gnn.faiss_bridge import FaissCatalog
+            import pandas as pd  # noqa: F401  (used inline below)
+
+            device = self.app.current_device()
+            _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+            self._update_q.put({"type": "router_progress", "text": "Movies: загрузка checkpoint..."})
+            movies = self._build_domain_engine("movies", device, InferenceEngine, UniversalSearchEngine)
+
+            self._update_q.put({"type": "router_progress", "text": "TV: загрузка checkpoint..."})
+            tv = self._build_domain_engine("tv", device, InferenceEngine, UniversalSearchEngine)
+
+            self._update_q.put({"type": "router_progress", "text": "FAISS: загрузка индекса..."})
+            faiss_catalog = (
+                FaissCatalog.load(_FAISS_INDEX, _FAISS_META)
+                if self._faiss_available else None
+            )
+
+            self._update_q.put({
+                "type": "router_ready",
+                "movies": movies,
+                "tv": tv,
+                "router": DualDomainEngine(
+                    movies_engine=movies, tv_engine=tv,
+                    faiss_catalog=faiss_catalog,
+                ),
+                "after": after,
+            })
+        except Exception:
+            self._update_q.put({"type": "router_error", "tb": traceback.format_exc()})
+
+    def _build_domain_engine(self, domain, device, InferenceEngine, UniversalSearchEngine):
+        import pandas as pd
+
+        stats = _collect_domain_stats(domain)
+        override = (
+            self.movies_checkpoint_override if domain == "movies"
+            else self.tv_checkpoint_override
+        )
+        # Приоритет: явный override → latest sidecar → хардкод v4.
+        if override:
+            checkpoint = stats.models_dir / override
+        elif stats.last_train_checkpoint:
+            checkpoint = stats.models_dir / stats.last_train_checkpoint
+        else:
+            checkpoint = stats.models_dir / f"lightgcn_{domain}_best_v4.pt"
+        dataset_dir = stats.dataset_dir
+
+        if not checkpoint.exists():
+            raise FileNotFoundError(f"{domain} checkpoint not found: {checkpoint}")
+        if not (dataset_dir / "items_metadata_final.parquet").exists():
+            raise FileNotFoundError(
+                f"{domain} dataset not built — см. вкладку «Создание датасета»"
+            )
+
+        infer = InferenceEngine(dataset_dir, checkpoint, device=device)
+        ok, msg = infer.load_resources()
+        if not ok:
+            raise RuntimeError(f"InferenceEngine.{domain}: {msg}")
+
+        metadata = pd.read_parquet(dataset_dir / "items_metadata_final.parquet")
+        embeddings = dataset_dir / "overview_embeddings.npy"
+        return UniversalSearchEngine(
+            metadata=metadata,
+            cache_dir=_CACHE_DIR,
+            tmdb_api_key=os.getenv("TMDB_API_KEY"),
+            inference_engine=infer,
+            embeddings_path=embeddings if embeddings.exists() else None,
+            model_num_items=infer.model.num_items,
+        )
+
+    def _run_recs(self, scope: str) -> None:
+        try:
+            tmdb_ids = [t for t, _, _ in self.favorites]
+            if scope == "movie":
+                recs = self.router.recs_movie(tmdb_ids, top_k=8)
+            elif scope == "tv":
+                recs = self.router.recs_tv(tmdb_ids, top_k=8)
+            elif scope == "all":
+                recs = self.router.recs_all(tmdb_ids, top_k=8)
+            elif scope == "cross":
+                target = self.cross_target_dd.value
+                recs = self.router.recs_cross(
+                    liked_tmdb_ids=tmdb_ids,
+                    target_media_type=target,
+                    top_k=8,
+                )
+            else:
+                recs = []
+            self._update_q.put({"type": "recs", "scope": scope, "items": list(recs)})
+        except Exception:
+            self._update_q.put({"type": "error", "tb": traceback.format_exc()})
+
+    async def _process_updates(self) -> None:
+        while self._thread is not None and self._thread.is_alive():
+            self._drain_queue()
+            await asyncio.sleep(0.1)
+        self._drain_queue()
+        self._toggle_buttons(True)
+        self.app.page.update()
+
+    def _drain_queue(self) -> None:
+        drained = False
+        try:
+            while True:
+                msg = self._update_q.get_nowait()
+                self._handle_message(msg)
+                drained = True
+        except queue.Empty:
+            pass
+        if drained:
+            self.app.page.update()
+
+    def _handle_message(self, msg: dict) -> None:
+        kind = msg.get("type")
+        if kind == "router_progress":
+            self.router_status.value = "⏳ " + msg["text"]
+            self.router_status.color = COLORS["primary"]
+        elif kind == "router_ready":
+            self.movies_engine = msg["movies"]
+            self.tv_engine = msg["tv"]
+            self.router = msg["router"]
+            self.router_status.value = "✅ Движки загружены"
+            self.router_status.color = COLORS["ok"]
+            self._set_status("Готов", COLORS["muted"])
+            after = msg.get("after")
+            if after == "search-retry":
+                self._on_search(None)
+            elif isinstance(after, tuple) and after[0] == "recs":
+                self._on_recs(after[1])
+        elif kind == "router_error":
+            self.router_status.value = "❌ Ошибка загрузки движков (см. ниже)"
+            self.router_status.color = COLORS["err"]
+            self.recs_list.controls.clear()
+            self.recs_list.controls.append(
+                ft.Text(msg["tb"], size=11, color=COLORS["err"],
+                        selectable=True, font_family="Consolas"),
+            )
+        elif kind == "recs":
+            items = msg["items"]
+            self.last_results = items
+            self._render_recs(items)
+            self._set_status(
+                f"{msg['scope']}: получено {len(items)} рекомендаций",
+                COLORS["ok"] if items else COLORS["warn"],
+            )
+        elif kind == "error":
+            self.recs_list.controls.clear()
+            self.recs_list.controls.append(
+                ft.Text(msg["tb"], size=11, color=COLORS["err"],
+                        selectable=True, font_family="Consolas"),
+            )
+            self._set_status("Ошибка (см. вывод)", COLORS["err"])
+
+    # ---- rendering ----
+
+    def _build_search_row(self, item) -> ft.Control:
+        lang = self.lang_dd.value
+        title = _display_title(item, lang)
+        year = item.year if item.year else "?"
+        badge = "🎬" if item.media_type == "movie" else "📺"
+        return ft.Row(
+            [
+                ft.Text(f"{badge} {title} ({year})", size=12, expand=True,
+                        no_wrap=False, selectable=True),
+                ft.IconButton(
+                    ft.Icons.STAR_BORDER, icon_size=18, icon_color=COLORS["accent"],
+                    tooltip="Добавить в избранное",
+                    on_click=lambda _e, it=item: self._add_to_favorites(it),
+                ),
+            ],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _render_recs(self, items) -> None:
+        self.recs_list.controls.clear()
+        if not items:
+            self.recs_list.controls.append(
+                ft.Text("(нет результатов)", size=12,
+                        color=COLORS["muted"], italic=True),
+            )
+            return
+        lang = self.lang_dd.value
+        for it in items:
+            self.recs_list.controls.append(self._build_recs_card(it, lang))
+
+    def _build_recs_card(self, item, lang: str) -> ft.Control:
+        title = _display_title(item, lang)
+        year = item.year if item.year else "?"
+        badge = "🎬 Movies" if item.media_type == "movie" else "📺 TV"
+        genres_text = ", ".join(item.genres[:5]) if item.genres else "—"
+        score_parts: list[str] = []
+        if getattr(item, "vote_average", 0):
+            score_parts.append(f"TMDB {item.vote_average:.1f}")
+        if getattr(item, "source", None):
+            score_parts.append(f"src={item.source}")
+
+        return ft.Container(
+            padding=10,
+            border=ft.border.all(1, COLORS["card_border"]),
+            border_radius=6,
+            bgcolor=ft.Colors.WHITE,
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(f"{title} ({year})", size=14,
+                                    weight=ft.FontWeight.BOLD, expand=True,
+                                    selectable=True),
+                            ft.Text(badge, size=11, color=COLORS["muted"]),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Text(genres_text, size=11, color=COLORS["muted"]),
+                    ft.Text(" · ".join(score_parts) if score_parts else "",
+                            size=10, color=COLORS["muted"], italic=True),
+                ],
+                spacing=2,
+            ),
+        )
+
+    # ---- helpers ----
+
+    def _toggle_buttons(self, enabled: bool) -> None:
+        self.recs_movie_btn.disabled = not enabled
+        self.recs_tv_btn.disabled = not enabled
+        self.recs_all_btn.disabled = not enabled
+        # Cross always respects FAISS availability.
+        self.recs_cross_btn.disabled = (not enabled) or (not self._faiss_available)
+        self.search_btn.disabled = not enabled
+
+    def _set_status(self, text: str, color) -> None:
+        self.status_text.value = text
+        self.status_text.color = color
+
+
+# ======================================================================
+# Main app
+# ======================================================================
+
+
+class TrainerGuiApp:
+    """Main Flet app holding shared state and the 4-tab layout."""
+
+    def __init__(self, page: ft.Page) -> None:
+        self.page = page
+        self.domain: str = "movies"
+        self.device: str = "cuda" if torch.cuda.is_available() else "cpu"
+        self.training_tab = TrainingTab(self)
+        self.dataset_tab = DatasetTab(self)
+        self.inference_tab = InferenceTab(self)
+        self.data_tab = DataTab(self)
+        self._build_layout()
+
+    def current_domain(self) -> str:
+        return self.domain
+
+    def current_device(self) -> str:
+        return self.device
+
+    def _build_layout(self) -> None:
+        self.page.title = "Recommendation System — Trainer GUI"
+        self.page.padding = 16
+        self.page.theme_mode = ft.ThemeMode.LIGHT
+
+        header = self._build_header()
+        tabs = self._build_tabs()
+        self.page.add(
+            ft.Column([header, ft.Divider(height=1), tabs], expand=True, spacing=12)
+        )
+
+    def _build_header(self) -> ft.Control:
+        title = ft.Text(
+            "Recommendation Trainer",
+            size=22,
+            weight=ft.FontWeight.BOLD,
+            color=COLORS["primary"],
+        )
+        self.domain_switcher = ft.Dropdown(
+            label="Домен",
+            value=self.domain,
+            options=[
+                ft.dropdown.Option("movies", "Movies"),
+                ft.dropdown.Option("tv", "TV"),
+            ],
+            width=160,
+            on_change=self._on_domain_changed,
+        )
+        self.device_selector = ft.SegmentedButton(
+            selected={self.device},
+            allow_multiple_selection=False,
+            segments=[
+                ft.Segment(value="cpu", label=ft.Text("CPU"),
+                           icon=ft.Icon(ft.Icons.COMPUTER)),
+                ft.Segment(
+                    value="cuda",
+                    label=ft.Text("GPU"),
+                    icon=ft.Icon(ft.Icons.BOLT),
+                    disabled=not torch.cuda.is_available(),
+                ),
+            ],
+            on_change=self._on_device_changed,
+        )
+        return ft.Row(
+            [title, ft.Container(expand=True), self.domain_switcher, self.device_selector],
+            alignment=ft.MainAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=16,
+        )
+
+    def _build_tabs(self) -> ft.Control:
+        return ft.Tabs(
+            selected_index=0,
+            expand=True,
+            tabs=[
+                ft.Tab(text="Обучение", icon=ft.Icons.SCHOOL,
+                       content=self.training_tab.build()),
+                ft.Tab(text="Создание датасета", icon=ft.Icons.BUILD,
+                       content=self.dataset_tab.build()),
+                ft.Tab(text="Тестирование", icon=ft.Icons.SCIENCE,
+                       content=self.inference_tab.build()),
+                ft.Tab(text="Данные", icon=ft.Icons.STORAGE,
+                       content=self.data_tab.build()),
+            ],
+        )
+
+    def _on_domain_changed(self, e: ft.ControlEvent) -> None:
+        self.domain = e.control.value
+        # Tab «Обучение»: data_dir идёт за доменом, пока пользователь не редактировал поле.
+        self.training_tab.sync_data_dir_to_domain(self.domain)
+        self.page.update()
+
+    def _on_device_changed(self, e: ft.ControlEvent) -> None:
+        selected = list(e.control.selected)
+        if selected:            self.device = selected[0]
+        self.page.update()
+
+
+def main(page: ft.Page) -> None:
+    TrainerGuiApp(page)
 
 
 if __name__ == "__main__":

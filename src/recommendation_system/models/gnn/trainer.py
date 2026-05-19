@@ -1,15 +1,18 @@
+import argparse
+import json
+import logging
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.optim as optim
-import numpy as np
-from pathlib import Path
-import logging
 from tqdm import tqdm
-import json
-import time
-from datetime import datetime
-import matplotlib.pyplot as plt
-import sys
-import os
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
@@ -84,36 +87,38 @@ class LightGCNTrainer:
             optimizer,
             loss_fn,
             batch_size: int = 2048,
-            num_batches: int = None
+            stop_flag=None,
     ) -> float:
         """
         Оптимизированное обучение на эпохе
         """
         self.model.train()
-        total_loss = 0
+        total_loss = torch.tensor(0.0, device=self.device)
         torch.cuda.empty_cache()  # Очистка памяти перед эпохой
 
-        if num_batches is None:
-            num_batches = len(train_df) // batch_size
+        num_batches = len(train_df) // batch_size
 
         interactions = train_df[['user_id', 'item_id']].values
         np.random.shuffle(interactions)
         progress_bar = tqdm(range(num_batches), desc='Training')
 
         for batch_idx in progress_bar:
+            if stop_flag is not None and stop_flag():
+                logger.info(f"⏹ Stop requested at batch {batch_idx}/{num_batches}")
+                break
             start_idx = batch_idx * batch_size
             end_idx = min(start_idx + batch_size, len(interactions))
             if end_idx <= start_idx:
                 break
 
             batch = interactions[start_idx:end_idx]
-            batch_users = torch.LongTensor(batch[:, 0]).to(self.device)
-            batch_pos_items = torch.LongTensor(batch[:, 1]).to(self.device)
-            batch_neg_items = torch.LongTensor(
-                self.negative_sampling_batch(batch[:, 0], train_matrix, num_negatives=1).flatten()
-            ).to(self.device)
+            batch_users = torch.from_numpy(batch[:, 0]).long().to(self.device, non_blocking=True)
+            batch_pos_items = torch.from_numpy(batch[:, 1]).long().to(self.device, non_blocking=True)
+            batch_neg_items = self.negative_sampling_batch(
+                batch_users, train_matrix, num_negatives=1
+            ).flatten()
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             if self.device == 'cuda':
                 with torch.amp.autocast('cuda'):  # Явно указываем device_type='cuda'
@@ -142,11 +147,15 @@ class LightGCNTrainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
 
-            total_loss += loss.item()
+            total_loss += loss.detach().float()
             if batch_idx % 50 == 0:
-                progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+                loss_val = loss.detach().item()  # один sync на 50 итераций
+                progress_bar.set_postfix({'loss': f'{loss_val:.4f}'})
+                logger.info(
+                    f"  batch {batch_idx}/{num_batches} | loss={loss_val:.4f}"
+                )
 
-        return total_loss / num_batches
+        return (total_loss / num_batches).item()
 
     @torch.no_grad()
     def evaluate(
@@ -202,8 +211,18 @@ class LightGCNTrainer:
             lr: float = 0.001,
             eval_every: int = 5,
             early_stopping_patience: int = 5,
-            save_dir: Path = None
+            output_path: Path = None,
+            on_epoch_end=None,
+            stop_flag=None,
     ):
+        """
+        Args:
+            on_epoch_end: optional callable(dict) invoked after every epoch with
+                {epoch, total_epochs, loss, recall, ndcg, best_epoch, evaluated}.
+                `recall` / `ndcg` are None on epochs without evaluation.
+            stop_flag: optional callable() -> bool. Polled before each epoch;
+                if True, training stops gracefully after the current epoch.
+        """
         logger.info("=" * 70)
         logger.info("НАЧАЛО ОБУЧЕНИЯ (ОПТИМИЗИРОВАННАЯ ВЕРСИЯ)")
         logger.info("=" * 70)
@@ -222,22 +241,37 @@ class LightGCNTrainer:
         best_epoch = 0
         patience_counter = 0
 
-        if save_dir is None:
-            save_dir = Path(__file__).parent / '../../../models'
-        save_dir.mkdir(parents=True, exist_ok=True)
+        if output_path is None:
+            output_path = Path(__file__).resolve().parents[3] / 'models' / 'lightgcn_best.pt'
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"\nМодели сохраняются в: {save_dir}")
+        logger.info(f"\nЧекпоинт сохраняется в: {output_path}")
         logger.info("")
 
+        epoch = 0
         for epoch in range(1, num_epochs + 1):
+            if stop_flag is not None and stop_flag():
+                logger.info("⏹ Stop requested — training cancelled.")
+                break
+
             epoch_start = time.time()
             train_loss = self.train_epoch(
                 train_graph, train_df, train_matrix,
-                optimizer, loss_fn, batch_size
+                optimizer, loss_fn, batch_size,
+                stop_flag=stop_flag,
             )
             epoch_time = time.time() - epoch_start
             self.train_losses.append(train_loss)
             self.epoch_times.append(epoch_time)
+            evaluated_this_epoch = False
+            epoch_recall = None
+            epoch_ndcg = None
+            early_stop = False
+
+            if stop_flag is not None and stop_flag():
+                logger.info("⏹ Stop requested — skipping eval/save for partial epoch")
+                break
 
             if epoch % eval_every == 0 or epoch == 1:
                 metrics = self.evaluate(
@@ -248,6 +282,9 @@ class LightGCNTrainer:
                 ndcg = metrics['ndcg@10']
                 self.val_recalls.append(recall)
                 self.val_ndcgs.append(ndcg)
+                evaluated_this_epoch = True
+                epoch_recall = float(recall)
+                epoch_ndcg = float(ndcg)
 
                 logger.info(
                     f"Epoch {epoch:3d}/{num_epochs} | "
@@ -268,13 +305,13 @@ class LightGCNTrainer:
                         'recall@10': recall,
                         'ndcg@10': ndcg,
                         'metrics': metrics
-                    }, save_dir / 'lightgcn_best.pt')
+                    }, output_path)
                     logger.info(f"  ✓ Новая лучшая модель сохранена!")
                 else:
                     patience_counter += 1
-                    if patience_counter >= early_stopping_patience:
+                    early_stop = patience_counter >= early_stopping_patience
+                    if early_stop:
                         logger.info(f"\n⏹ Early stopping! Нет улучшений {early_stopping_patience} проверок")
-                        break
             else:
                 logger.info(
                     f"Epoch {epoch:3d}/{num_epochs} | "
@@ -282,33 +319,51 @@ class LightGCNTrainer:
                     f"Time: {epoch_time:.1f}s"
                 )
 
+            if on_epoch_end is not None:
+                try:
+                    on_epoch_end({
+                        'epoch': epoch,
+                        'total_epochs': num_epochs,
+                        'loss': float(train_loss),
+                        'recall': epoch_recall,
+                        'ndcg': epoch_ndcg,
+                        'best_epoch': best_epoch,
+                        'evaluated': evaluated_this_epoch,
+                        'time_seconds': epoch_time,
+                    })
+                except Exception as cb_exc:
+                    logger.warning(f"on_epoch_end callback raised: {cb_exc}")
+
+            if early_stop:
+                break
+
         logger.info("\n" + "=" * 70)
         logger.info("ФИНАЛЬНАЯ ОЦЕНКА")
         logger.info("=" * 70)
 
-        checkpoint = torch.load(save_dir / 'lightgcn_best.pt')
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        final_metrics = self.evaluate(
-            train_graph, test_data, train_matrix,
-            k=10, sample_users=5000
-        )
-
-        logger.info(f"\nЛучшая модель (эпоха {best_epoch}):")
-        logger.info(f"  Recall@10: {final_metrics['recall@10']:.4f}")
-        logger.info(f"  NDCG@10:   {final_metrics['ndcg@10']:.4f}")
-        logger.info(f"  Users оценено: {final_metrics['num_users_evaluated']:,}")
+        if output_path.exists():
+            checkpoint = torch.load(output_path, map_location=self.device, weights_only=False)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            final_metrics = self.evaluate(
+                train_graph, test_data, train_matrix,
+                k=10, sample_users=5000
+            )
+            logger.info(f"\nЛучшая модель (эпоха {best_epoch}):")
+            logger.info(f"  Recall@10: {final_metrics['recall@10']:.4f}")
+            logger.info(f"  NDCG@10:   {final_metrics['ndcg@10']:.4f}")
+            logger.info(f"  Users оценено: {final_metrics['num_users_evaluated']:,}")
+        else:
+            logger.warning("Чекпоинт не был сохранён (ни одна эпоха не дала улучшения).")
+            final_metrics = {'recall@10': 0.0, 'ndcg@10': 0.0, 'num_users_evaluated': 0}
 
         training_stats = {
             'best_epoch': best_epoch,
             'best_recall@10': best_recall,
             'final_metrics': final_metrics,
             'total_epochs': epoch,
-            'avg_epoch_time': np.mean(self.epoch_times),
-            'total_time': sum(self.epoch_times)
+            'avg_epoch_time': float(np.mean(self.epoch_times)) if self.epoch_times else 0.0,
+            'total_time': float(sum(self.epoch_times)),
         }
-
-        with open(save_dir / 'training_stats.json', 'w') as f:
-            json.dump(training_stats, f, indent=2)
 
         logger.info(f"\nВсего эпох: {epoch}")
         logger.info(f"Среднее время эпохи: {np.mean(self.epoch_times):.1f}s")
@@ -341,49 +396,251 @@ class LightGCNTrainer:
             logger.info(f"График сохранён: {save_path}")
         plt.show()
 
-def main():
-    epochs = 30
-    batch_size = 2048
-    lr = 0.002
-    embedding_dim = 32
-    num_layers = 2
-    patience = 3
-    eval_every = 5
+def _resolve_project_root() -> Path:
+    p = Path(__file__).resolve()
+    while p.name != 'recommendation_for_film_and_tv_shows' and p.parent != p:
+        p = p.parent
+    return p
 
-    script_dir = Path(__file__).parent
-    project_root = script_dir
-    while project_root.name != 'recommendation_for_film_and_tv_shows' and project_root.parent != project_root:
-        project_root = project_root.parent
-    data_dir = project_root / 'data'
 
-    logger.info(f"Данные: {data_dir}")
+def _next_versioned_path(models_dir: Path, prefix: str) -> Path:
+    models_dir.mkdir(parents=True, exist_ok=True)
+    pattern = re.compile(rf"^{re.escape(prefix)}_v(\d+)\.pt$")
+    versions = [int(m.group(1)) for f in models_dir.iterdir()
+                if (m := pattern.match(f.name)) is not None]
+    next_v = max(versions, default=0) + 1
+    return models_dir / f"{prefix}_v{next_v}.pt"
+
+
+def _sanity_check(model: LightGCN, metrics: dict) -> tuple[bool, list]:
+    failures = []
+
+    recall = metrics.get('recall@10', 0.0)
+    if recall <= 0.05:
+        failures.append(f"recall@10 = {recall:.4f} (expected > 0.05)")
+
+    with torch.no_grad():
+        user_norm = model.user_embedding.weight.data.norm(dim=1).mean().item()
+        item_norm = model.item_id_embedding.weight.data.norm(dim=1).mean().item()
+    if user_norm <= 0.01:
+        failures.append(f"||user_emb||.mean() = {user_norm:.4f} (expected > 0.01)")
+    if item_norm <= 0.01:
+        failures.append(f"||item_emb||.mean() = {item_norm:.4f} (expected > 0.01)")
+
+    return len(failures) == 0, failures
+
+
+def _write_sidecar(sidecar_path: Path, **fields) -> None:
+    serializable = {}
+    for k, v in fields.items():
+        if isinstance(v, dict):
+            serializable[k] = {ik: (float(iv) if isinstance(iv, (np.floating,)) else
+                                    int(iv) if isinstance(iv, (np.integer,)) else iv)
+                               for ik, iv in v.items()}
+        elif isinstance(v, np.floating):
+            serializable[k] = float(v)
+        elif isinstance(v, np.integer):
+            serializable[k] = int(v)
+        elif isinstance(v, Path):
+            serializable[k] = str(v)
+        else:
+            serializable[k] = v
+    with open(sidecar_path, 'w', encoding='utf-8') as f:
+        json.dump(serializable, f, indent=2, ensure_ascii=False)
+
+
+def _parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train per-domain LightGCN (movies or tv).",
+    )
+    parser.add_argument('--domain', choices=['movies', 'tv'], required=True,
+                        help="Which domain to train.")
+    parser.add_argument('--data-dir', type=Path, default=None,
+                        help="Dataset directory with *_final.parquet (default: "
+                             "<project>/data/processed/{domain}).")
+    parser.add_argument('--output', type=Path, default=None,
+                        help="Checkpoint path (default: auto-bumped "
+                             "models/{domain}/lightgcn_{domain}_best_v{N+1}.pt).")
+    parser.add_argument('--epochs', type=int, default=30)
+    parser.add_argument('--batch-size', type=int, default=2048)
+    parser.add_argument('--lr', type=float, default=0.002)
+    parser.add_argument('--embedding-dim', type=int, default=32)
+    parser.add_argument('--num-layers', type=int, default=2)
+    parser.add_argument('--patience', type=int, default=3)
+    parser.add_argument('--eval-every', type=int, default=5)
+    parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto',
+                        help="Forwarded to torch without auto-override; "
+                             "'auto' picks cuda if available, else cpu.")
+    parser.add_argument('--resume', type=Path, default=None,
+                        help="Resume from .pt checkpoint.")
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--dry-run', action='store_true',
+                        help="Print resolved config and exit without training.")
+    return parser.parse_args(argv)
+
+
+def main(argv=None, *, on_epoch_end=None, stop_flag=None) -> int:
+    """
+    Args:
+        argv: command-line tokens (None → sys.argv).
+        on_epoch_end: optional callable forwarded to LightGCNTrainer.train().
+        stop_flag: optional callable() -> bool forwarded to LightGCNTrainer.train().
+    """
+    args = _parse_args(argv)
+
+    project_root = _resolve_project_root()
+
+    # Device resolution — explicit user choice wins over auto.
+    if args.device == 'auto':
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    else:
+        device = args.device
+        if device == 'cuda' and not torch.cuda.is_available():
+            logger.warning("--device cuda requested but CUDA not available, falling back to cpu")
+            device = 'cpu'
+
+    data_dir = args.data_dir or (project_root / 'data' / 'processed' / args.domain)
+
+    models_dir = project_root / 'models' / args.domain
+    if args.output is not None:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path = _next_versioned_path(models_dir, f'lightgcn_{args.domain}_best')
+
+    sidecar_path = output_path.with_suffix('.json')
+
+    config = {
+        'domain': args.domain,
+        'data_dir': str(data_dir),
+        'output': str(output_path),
+        'sidecar': str(sidecar_path),
+        'device': device,
+        'epochs': args.epochs,
+        'batch_size': args.batch_size,
+        'lr': args.lr,
+        'embedding_dim': args.embedding_dim,
+        'num_layers': args.num_layers,
+        'patience': args.patience,
+        'eval_every': args.eval_every,
+        'resume': str(args.resume) if args.resume else None,
+        'seed': args.seed,
+    }
+
+    if args.dry_run:
+        logger.info("[DRY-RUN] Would train with:")
+        for k, v in config.items():
+            logger.info(f"  {k}: {v}")
+        return 0
+
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
+    logger.info(f"Domain: {args.domain}")
+    logger.info(f"Dataset dir: {data_dir}")
+    logger.info(f"Output: {output_path}")
+    logger.info(f"Device: {device}")
     logger.info("Подготовка данных...")
-    builder = MovieGraphBuilder(data_dir)
-    data = builder.prepare_for_training(test_size=0.2, temporal=False)
+    builder = MovieGraphBuilder(dataset_dir=data_dir)
+    data = builder.prepare_for_training(test_size=0.2, temporal=False, random_state=args.seed)
 
     logger.info("\nСоздание модели...")
     model = LightGCN(
         num_users=data['num_users'],
         num_items=data['num_items'],
-        embedding_dim=embedding_dim,
-        num_layers=num_layers
+        embedding_dim=args.embedding_dim,
+        num_layers=args.num_layers,
     )
 
-    trainer = LightGCNTrainer(model)
+    if args.resume is not None:
+        if not args.resume.exists():
+            logger.error(f"--resume path does not exist: {args.resume}")
+            return 2
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'])
+        logger.info(f"Resumed from {args.resume}")
+
+    trainer = LightGCNTrainer(model, device=device)
     stats = trainer.train(
         data=data,
-        num_epochs=epochs,
-        batch_size=batch_size,
-        lr=lr,
-        eval_every=eval_every,
-        early_stopping_patience=patience
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        eval_every=args.eval_every,
+        early_stopping_patience=args.patience,
+        output_path=output_path,
+        on_epoch_end=on_epoch_end,
+        stop_flag=stop_flag,
     )
 
-    save_dir = project_root / 'reports' / 'figures'
-    save_dir.mkdir(parents=True, exist_ok=True)
-    trainer.plot_training(save_dir / 'training_curves.png')
+    final_metrics = stats['final_metrics']
+    sanity_ok, failures = _sanity_check(trainer.model, final_metrics)
 
-    logger.info("\nОбучение завершено успешно!")
+    plot_path = output_path.with_suffix('.training_curves.png')
+    try:
+        trainer.plot_training(plot_path)
+    except Exception as e:  # plotting must not fail the run
+        logger.warning(f"Plotting failed: {e}")
+
+    interactions_total = len(data['train_df']) + len(data['test_data']['interactions'])
+    _write_sidecar(
+        sidecar_path,
+        checkpoint=output_path.name,
+        domain=args.domain,
+        device=device,
+        trained_at=datetime.now(timezone.utc).isoformat(),
+        epochs_run=stats['total_epochs'],
+        best_epoch=stats['best_epoch'],
+        metrics={
+            'recall@10': final_metrics.get('recall@10', 0.0),
+            'ndcg@10': final_metrics.get('ndcg@10', 0.0),
+            'best_recall@10': stats['best_recall@10'],
+            'num_users_evaluated': final_metrics.get('num_users_evaluated', 0),
+        },
+        dataset={
+            'users': int(data['num_users']),
+            'items': int(data['num_items']),
+            'interactions': int(interactions_total),
+        },
+        hyperparameters={
+            'epochs': args.epochs,
+            'batch_size': args.batch_size,
+            'lr': args.lr,
+            'embedding_dim': args.embedding_dim,
+            'num_layers': args.num_layers,
+            'patience': args.patience,
+            'eval_every': args.eval_every,
+            'seed': args.seed,
+        },
+        timing={
+            'avg_epoch_seconds': stats['avg_epoch_time'],
+            'total_seconds': stats['total_time'],
+        },
+        sanity_check={
+            'passed': sanity_ok,
+            'failures': failures,
+        },
+    )
+
+    if sanity_ok:
+        logger.info("=" * 70)
+        logger.info("✅ TRAINING COMPLETE — sanity-check PASSED")
+        logger.info(f"   Checkpoint: {output_path}")
+        logger.info(f"   Sidecar:    {sidecar_path}")
+        logger.info("=" * 70)
+        return 0
+    else:
+        logger.error("=" * 70)
+        logger.error("❌ TRAINING COMPLETE — sanity-check FAILED:")
+        for f in failures:
+            logger.error(f"   - {f}")
+        logger.error(f"   Checkpoint kept at: {output_path}")
+        logger.error(f"   Sidecar:    {sidecar_path}")
+        logger.error("=" * 70)
+        return 1
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
