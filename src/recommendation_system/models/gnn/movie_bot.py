@@ -42,7 +42,7 @@ from bot.session_store import SessionStore
 from cold_start import ColdStartIngestor
 from dual_domain_engine import DualDomainEngine
 from faiss_bridge import TV_OFFSET, FaissCatalog
-from trainer_gui import InferenceEngine
+from inference_engine import InferenceEngine
 from universal_search import (
     TrendingUpdater,
     UniversalMediaItem,

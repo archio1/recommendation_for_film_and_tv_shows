@@ -142,6 +142,10 @@ class LightGCN(nn.Module):
 
         return final_embedding[:self.num_users], final_embedding[self.num_users:]
 
+    def predict(self, user_emb, item_emb, user_ids, item_ids):
+        # Dot product score: вектор пользователя · вектор айтема.
+        return (user_emb[user_ids] * item_emb[item_ids]).sum(dim=-1)
+
 
 class BPRLoss(nn.Module):
     """

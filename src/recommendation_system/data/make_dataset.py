@@ -141,6 +141,11 @@ class MovieDatasetProcessor:
             data_dir: Path,
             config_path: str = "config/settings.json",
             *,
+            output_subdir: Optional[str] = None,
+            ml_dir: Optional[Path] = None,
+            tmdb_csv: Optional[Path] = None,
+            trakt_shows_csv: Optional[Path] = None,
+            trakt_interactions_csv: Optional[Path] = None,
             top_n_movies: int = 12_000,
             top_n_tv: int = 5_000,
             min_year: Optional[int] = None,
@@ -153,6 +158,13 @@ class MovieDatasetProcessor:
         self.data_raw = data_dir / 'raw'
         self.data_processed = data_dir / 'processed'
         self.data_processed.mkdir(parents=True, exist_ok=True)
+
+        # Optional source overrides. None → используется дефолт под data_raw/.
+        self.output_subdir = output_subdir
+        self.ml_dir = ml_dir
+        self.tmdb_csv = tmdb_csv
+        self.trakt_shows_csv = trakt_shows_csv
+        self.trakt_interactions_csv = trakt_interactions_csv
 
         # Per-domain output dir, set by build_movie_dataset() / build_tv_dataset().
         # Defaults to data_processed for legacy flows.
@@ -295,25 +307,27 @@ class MovieDatasetProcessor:
         """Load raw datasets with explicit dtypes for memory efficiency."""
         self._section("1. LOADING DATA")
 
+        ml_root = self.ml_dir or (self.data_raw / 'ml-32m')
+
         ml_ratings = pd.read_csv(
-            self.data_raw / 'ml-32m/ratings.csv',
+            ml_root / 'ratings.csv',
             dtype={'userId': 'uint32', 'movieId': 'uint32',
                    'rating': 'float32', 'timestamp': 'uint32'},
         )
         ml_ratings.columns = ['user_id', 'movie_id', 'rating', 'timestamp']
 
-        ml_movies = pd.read_csv(self.data_raw / 'ml-32m/movies.csv')
+        ml_movies = pd.read_csv(ml_root / 'movies.csv')
         ml_movies.columns = ['movie_id', 'title', 'genres']
 
         # tmdb_id can be NaN → read as float, convert later
         ml_links = pd.read_csv(
-            self.data_raw / 'ml-32m/links.csv',
+            ml_root / 'links.csv',
             dtype={'tmdbId': 'float64'},
         )
         ml_links.columns = ['movie_id', 'imdb_id', 'tmdb_id']
 
         # TMDB + TV (graceful if files missing)
-        tmdb_path = self.data_raw / 'TMDB_movie_dataset_v11.csv'
+        tmdb_path = self.tmdb_csv or (self.data_raw / 'TMDB_movie_dataset_v11.csv')
         tv_path = self.data_raw / 'tv_series.csv'
 
         tmdb_movies = (
@@ -487,7 +501,7 @@ class MovieDatasetProcessor:
         """
         self._section("TRAKT TV METADATA")
 
-        shows_path = self.data_raw / "trakt_shows.csv"
+        shows_path = self.trakt_shows_csv or (self.data_raw / "trakt_shows.csv")
         if not shows_path.exists():
             logger.warning(f"Trakt shows CSV not found: {shows_path}")
             return pd.DataFrame()
@@ -546,7 +560,7 @@ class MovieDatasetProcessor:
         """
         self._section("TRAKT INTERACTIONS")
 
-        path = self.data_raw / "trakt_interactions.csv"
+        path = self.trakt_interactions_csv or (self.data_raw / "trakt_interactions.csv")
         if not path.exists():
             logger.warning(f"Trakt interactions CSV not found: {path}")
             return pd.DataFrame()
@@ -1242,7 +1256,7 @@ class MovieDatasetProcessor:
         Юзер/item пространства независимы от TV-ветки. tmdb_id для фильмов
         используется as-is (не смещается).
         """
-        self.output_dir = self.data_processed / 'movies'
+        self.output_dir = self.data_processed / (self.output_subdir or 'movies')
         try:
             ml_ratings, ml_movies, ml_links, tmdb_raw, _tv_raw = self.load_data()
 
@@ -1263,8 +1277,11 @@ class MovieDatasetProcessor:
             ml_ratings['tmdb_id'] = ml_ratings['tmdb_id'].astype(int)
             ml_interactions = ml_ratings[['user_id', 'tmdb_id', 'rating', 'timestamp']].copy()
 
-            amazon_dir = amazon_dir or Path("D:/amazon_data")
-            amazon_interactions = self.load_amazon_interactions(movie_metadata, amazon_dir)
+            if amazon_dir is not None:
+                amazon_interactions = self.load_amazon_interactions(movie_metadata, amazon_dir)
+            else:
+                logger.info("Amazon dir not provided — skipping Amazon interactions")
+                amazon_interactions = pd.DataFrame()
 
             if not amazon_interactions.empty:
                 user_offset = int(ml_interactions['user_id'].max()) + 1
@@ -1293,7 +1310,7 @@ class MovieDatasetProcessor:
         Собственные user_id/item_id пространства. tmdb_id смещены на +10_000_000
         (согласовано с HotCache и прочими частями системы).
         """
-        self.output_dir = self.data_processed / 'tv'
+        self.output_dir = self.data_processed / (self.output_subdir or 'tv')
         try:
             tv_metadata = self.load_trakt_metadata()
             if tv_metadata.empty:
@@ -1308,8 +1325,11 @@ class MovieDatasetProcessor:
                 logger.error("Trakt interactions empty — aborting TV branch")
                 return False
 
-            amazon_dir = amazon_dir or Path("D:/amazon_data")
-            amazon_interactions = self.load_amazon_interactions(tv_metadata, amazon_dir)
+            if amazon_dir is not None:
+                amazon_interactions = self.load_amazon_interactions(tv_metadata, amazon_dir)
+            else:
+                logger.info("Amazon dir not provided — skipping Amazon interactions")
+                amazon_interactions = pd.DataFrame()
 
             if not amazon_interactions.empty:
                 user_offset = int(trakt_interactions['user_id'].max()) + 1

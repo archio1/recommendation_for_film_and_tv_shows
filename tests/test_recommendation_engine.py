@@ -2,7 +2,7 @@ import pytest
 import torch
 import numpy as np
 from unittest.mock import MagicMock
-from src.recommendation_system.models.gnn.trainer_gui import InferenceEngine
+from src.recommendation_system.models.gnn.inference_engine import InferenceEngine
 
 
 # --- ВСПОМОГАТЕЛЬНЫЙ КЛАСС (MOCK) ---

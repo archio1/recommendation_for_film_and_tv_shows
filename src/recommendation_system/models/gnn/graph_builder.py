@@ -20,13 +20,25 @@ logger = logging.getLogger(__name__)
 class MovieGraphBuilder:
     """Builds bipartite user-item graph for LightGCN"""
 
-    def __init__(self, data_dir: Path):
-        self.data_processed = data_dir / 'processed'
+    def __init__(self, data_dir: Path = None, *, dataset_dir: Path = None):
+        """
+        Args:
+            data_dir: legacy positional — assumed to contain `processed/<files>` inside.
+            dataset_dir: new keyword — directory directly containing
+                interactions_final.parquet / items_metadata_final.parquet / id_mapping.json
+                (e.g. data/processed/movies for the dual-domain layout).
+        """
+        if dataset_dir is not None:
+            self.dataset_dir = Path(dataset_dir)
+        elif data_dir is not None:
+            self.dataset_dir = Path(data_dir) / 'processed'
+        else:
+            raise ValueError("MovieGraphBuilder requires either data_dir or dataset_dir")
 
-        self.interactions = pd.read_parquet(self.data_processed / 'interactions_final.parquet')
-        self.metadata = pd.read_parquet(self.data_processed / 'items_metadata_final.parquet')
+        self.interactions = pd.read_parquet(self.dataset_dir / 'interactions_final.parquet')
+        self.metadata = pd.read_parquet(self.dataset_dir / 'items_metadata_final.parquet')
 
-        with open(self.data_processed / 'id_mapping.json') as f:
+        with open(self.dataset_dir / 'id_mapping.json') as f:
             self.mapping = json.load(f)
 
         self.num_users = self.mapping['num_users']

@@ -87,7 +87,7 @@ def _require(*paths: Path) -> None:
 
 
 def _build_real_engine(dataset_dir: Path, checkpoint: Path):
-    from recommendation_system.models.gnn.trainer_gui import InferenceEngine
+    from recommendation_system.models.gnn.inference_engine import InferenceEngine
     from recommendation_system.models.gnn.universal_search import UniversalSearchEngine
 
     _require(dataset_dir / "items_metadata_final.parquet", checkpoint)

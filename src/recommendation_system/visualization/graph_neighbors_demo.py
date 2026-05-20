@@ -151,7 +151,7 @@ def _hover(title: str, year, genres) -> str:
 
 
 def _build_engine(dataset_dir: Path, checkpoint: Path):
-    from recommendation_system.models.gnn.trainer_gui import InferenceEngine
+    from recommendation_system.models.gnn.inference_engine import InferenceEngine
     from recommendation_system.models.gnn.universal_search import UniversalSearchEngine
 
     for required in (dataset_dir / "items_metadata_final.parquet", checkpoint):
