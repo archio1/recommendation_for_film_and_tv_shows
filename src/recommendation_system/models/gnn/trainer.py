@@ -8,6 +8,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless: GUI вызывает plot_training из worker-треда; default TkAgg крашит __del__ из не-main треда.
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -394,7 +397,7 @@ class LightGCNTrainer:
         if save_path:
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
             logger.info(f"График сохранён: {save_path}")
-        plt.show()
+        plt.close(fig)
 
 def _resolve_project_root() -> Path:
     p = Path(__file__).resolve()

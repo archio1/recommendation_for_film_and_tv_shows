@@ -71,13 +71,26 @@ class TrainingTab:
     # ---- construction ----
 
     def _build(self) -> None:
+        # Domain switcher теперь локальный для вкладки «Обучение»
+        # (DatasetTab/InferenceTab имеют свои). По умолчанию — movies.
+        self.domain_dd = ft.Dropdown(
+            label="Домен",
+            value="movies",
+            options=[
+                ft.dropdown.Option("movies", "Movies"),
+                ft.dropdown.Option("tv", "TV"),
+            ],
+            width=160,
+            on_change=self._on_domain_changed,
+        )
+
         # data_dir picker — произвольная папка (TextField + FilePicker).
         # Дефолт идёт за domain switcher, пока пользователь не отредактировал поле.
-        default_data_dir = PROJECT_ROOT / "data" / "processed" / self.app.current_domain()
+        default_data_dir = PROJECT_ROOT / "data" / "processed" / self.domain_dd.value
         self.data_dir_input = ft.TextField(
             label="Папка с датасетом",
             value=str(default_data_dir),
-            hint_text=str(PROJECT_ROOT / "data" / "processed" / self.app.current_domain()),
+            hint_text=str(PROJECT_ROOT / "data" / "processed" / self.domain_dd.value),
             width=420,
             dense=True,
             on_change=self._on_data_dir_edited,
@@ -176,8 +189,8 @@ class TrainingTab:
         )
 
         data_dir_row = ft.Row(
-            [self.data_dir_input, self.data_dir_btn],
-            spacing=4,
+            [self.domain_dd, self.data_dir_input, self.data_dir_btn],
+            spacing=8,
             vertical_alignment=ft.CrossAxisAlignment.END,
         )
         output_row = ft.Row(
@@ -296,7 +309,7 @@ class TrainingTab:
             self.app.page.update()
             return
 
-        domain = self.app.current_domain()
+        domain = self.domain_dd.value
         device = self.app.current_device()
         data_dir_raw = (self.data_dir_input.value or "").strip()
         if data_dir_raw:
@@ -381,7 +394,7 @@ class TrainingTab:
         current = (self.data_dir_input.value or "").strip()
         candidate = (
             Path(current).expanduser() if current
-            else PROJECT_ROOT / "data" / "processed" / self.app.current_domain()
+            else PROJECT_ROOT / "data" / "processed" / self.domain_dd.value
         )
         return _first_existing_ancestor(candidate, PROJECT_ROOT / "data")
 
@@ -396,13 +409,18 @@ class TrainingTab:
         # Любая ручная правка → отключаем auto-sync с domain switcher.
         self._user_overrode_data_dir = True
 
-    def sync_data_dir_to_domain(self, domain: str) -> None:
-        """Called by TrainerGuiApp on domain change; no-op if user overrode."""
+    def _on_domain_changed(self, e: ft.ControlEvent) -> None:
+        """Local handler: пересинхронизирует data_dir под выбранный домен."""
         if self._user_overrode_data_dir:
             return
+        domain = self.domain_dd.value
         self.data_dir_input.value = str(
             PROJECT_ROOT / "data" / "processed" / domain
         )
+        self.data_dir_input.hint_text = str(
+            PROJECT_ROOT / "data" / "processed" / domain
+        )
+        self.app.page.update()
 
     # ---- worker thread ----
 
@@ -2680,16 +2698,12 @@ class TrainerGuiApp:
 
     def __init__(self, page: ft.Page) -> None:
         self.page = page
-        self.domain: str = "movies"
         self.device: str = "cuda" if torch.cuda.is_available() else "cpu"
         self.training_tab = TrainingTab(self)
         self.dataset_tab = DatasetTab(self)
         self.inference_tab = InferenceTab(self)
         self.data_tab = DataTab(self)
         self._build_layout()
-
-    def current_domain(self) -> str:
-        return self.domain
 
     def current_device(self) -> str:
         return self.device
@@ -2712,16 +2726,9 @@ class TrainerGuiApp:
             weight=ft.FontWeight.BOLD,
             color=COLORS["primary"],
         )
-        self.domain_switcher = ft.Dropdown(
-            label="Домен",
-            value=self.domain,
-            options=[
-                ft.dropdown.Option("movies", "Movies"),
-                ft.dropdown.Option("tv", "TV"),
-            ],
-            width=160,
-            on_change=self._on_domain_changed,
-        )
+        # Domain selector живёт внутри каждой вкладки (TrainingTab.domain_dd,
+        # DatasetTab.domain_dd, InferenceTab.scope_dd). Глобальным остаётся
+        # только Device — он влияет и на train, и на загрузку inference-движков.
         self.device_selector = ft.SegmentedButton(
             selected={self.device},
             allow_multiple_selection=False,
@@ -2738,7 +2745,7 @@ class TrainerGuiApp:
             on_change=self._on_device_changed,
         )
         return ft.Row(
-            [title, ft.Container(expand=True), self.domain_switcher, self.device_selector],
+            [title, ft.Container(expand=True), self.device_selector],
             alignment=ft.MainAxisAlignment.START,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=16,
@@ -2759,12 +2766,6 @@ class TrainerGuiApp:
                        content=self.data_tab.build()),
             ],
         )
-
-    def _on_domain_changed(self, e: ft.ControlEvent) -> None:
-        self.domain = e.control.value
-        # Tab «Обучение»: data_dir идёт за доменом, пока пользователь не редактировал поле.
-        self.training_tab.sync_data_dir_to_domain(self.domain)
-        self.page.update()
 
     def _on_device_changed(self, e: ft.ControlEvent) -> None:
         selected = list(e.control.selected)
