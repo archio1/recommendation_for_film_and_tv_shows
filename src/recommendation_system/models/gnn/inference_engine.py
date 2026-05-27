@@ -99,13 +99,21 @@ class InferenceEngine:
 
             embedding_dim = state_dict['user_embedding.weight'].shape[1]
             num_users = state_dict['user_embedding.weight'].shape[0]
-            num_genres = state_dict['genre_encoder.weight'].shape[1]
+            # genre_encoder есть только в гибридных моделях (num_genres > 0).
+            # Чистые LightGCN (новый trainer.py) — без content-features.
+            if 'genre_encoder.weight' in state_dict:
+                num_genres = state_dict['genre_encoder.weight'].shape[1]
+            else:
+                num_genres = 0
 
             num_layers = 2
             if 'layer_weights' in state_dict:
                 num_layers = state_dict['layer_weights'].shape[0] - 1
 
-            self.item_features, _ = self._prepare_features(num_genres)
+            if num_genres > 0:
+                self.item_features, _ = self._prepare_features(num_genres)
+            else:
+                self.item_features = None
 
             self.model = LightGCN(
                 num_users=num_users,
