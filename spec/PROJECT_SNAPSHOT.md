@@ -1,7 +1,7 @@
 # PROJECT_SNAPSHOT: Dual-LightGCN Movie/TV Recommender
 
-> **Timestamp:** 2026-05-08
-> **Status:** Two-model architecture внедрена (Этапы 1–6 из `spec/two-model-architecture.md`); Этап 7 (retrain) и локальная тренировка вынесены в отдельные spec'ы — `spec/retrain-pipeline.md` и `spec/local-training.md`
+> **Timestamp:** 2026-05-29
+> **Status:** Two-model architecture внедрена (Этапы 1–6 из `spec/two-model-architecture.md`); локальная тренировка (`spec/local-training.md`) реализована — CLI `trainer.py` + админский GUI `trainer_gui.py` (отрефакторен в подпакет `gui/`, см. 3.7). Этап 7 (retrain) — в работе (`spec/retrain-pipeline.md`).
 > **Version:** 0.9.0
 
 ---
@@ -117,6 +117,21 @@ graph TD
   - `--top <N>` — топ-N юзеров по числу лайков
 - **SessionStore extensions:** `get_all_users()`, `get_user_likes()`, `get_top_liked(n)` (read-only).
 
+### 3.7 Admin GUI (Flet)
+Десктоп-GUI для админов/разработчиков (не end-user — для пользователей есть `movie_bot.py`). Запуск: `python -m recommendation_system.models.gnn.trainer_gui`. Подробный гайд — `docs/trainer_gui_guide.md`.
+
+- **`trainer_gui.py`** — тонкая точка входа: реэкспортит `main`/`TrainerGuiApp` и держит `__main__`-блок (UTF-8 reconfigure stdout/stderr). Вся реализация вынесена в подпакет `gui/`.
+- **`gui/`** — 4 вкладки + общий device-стейт, разбит на модули по слоям зависимостей (DAG, без циклов):
+  - `theme.py` — общие константы (`COLORS`, `PROJECT_ROOT`)
+  - `common.py` — кросс-табные утилиты: логгер-мост `_QueueLogHandler`, file-picker хелперы
+  - `domain_stats.py` — `DomainStats` + коллекторы статистики датасетов/моделей (читают parquet-метаданные и sidecar JSON)
+  - `training_tab.py` — вкладка «Обучение» (обёртка `trainer.main()` в фоновом потоке + live-метрики/чарт)
+  - `dataset_tab.py` — вкладка «Создание датасета» (обёртка `MovieDatasetProcessor.build_*` + preset'ы + post-build sanity)
+  - `inference_tab.py` — вкладка «Тестирование» (тот же `DualDomainEngine`, lazy-load движков, bilingual-поиск, 4 кнопки `/recs_*`)
+  - `data_tab.py` — вкладка «Данные» (readonly дашборд per-domain)
+  - `app.py` — `TrainerGuiApp` (layout, device-селектор) + `main()`
+- **Что GUI делает:** локальная тренировка вместо Colab, сборка датасетов через UI, офлайн-тест рекомендаций, обзор состояния датасетов/моделей. **Не делает:** Trakt-collect, push в production, hyperparameter sweep, hot-swap моделей (нужен рестарт).
+
 ---
 
 ## 4. Логика интеграции данных
@@ -167,13 +182,12 @@ graph TD
 
 ## 8. В работе (запланировано, не реализовано)
 
-### 8.1 Локальная тренировка — `spec/local-training.md`
-**Цель:** довести `trainer.py` до полноценного CLI (`--domain`, `--data-dir`, `--output`, `--epochs` …) с metrics-sidecar и sanity-check; адаптировать `trainer_gui.py` (Flet, был заброшен) под dual-domain (вкладки Обучение/Тестирование/Данные с переиспользованием `DualDomainEngine`).
+> ✅ **Завершено:** Локальная тренировка (`spec/local-training.md`) — `trainer.py` доведён до полноценного CLI (`--domain`, `--data-dir`, `--output`, `--epochs` …) с metrics-sidecar и sanity-check; `trainer_gui.py` (Flet) переписан под dual-domain (вкладки Обучение/Создание датасета/Тестирование/Данные на общем `DualDomainEngine`) и отрефакторен в подпакет `gui/` (см. 3.7).
 
-### 8.2 Retrain Pipeline — `spec/retrain-pipeline.md`
+### 8.1 Retrain Pipeline — `spec/retrain-pipeline.md`
 **Цель:** `scripts/retrain.py` — оркестратор полного цикла (Trakt → make_dataset → trainer × 2 → embeddings → FAISS) с опциональными шагами (`--skip-trakt`, `--skip-raw`, `--skip-faiss`, `--domain`). Production-pointer `models/CURRENT.json`. Makefile-цели `retrain` / `retrain-quick` / `retrain-dry`. Запуск вручную раз в 1–3 месяца, без CI/cron.
 
-### 8.3 RU-backfill метаданных
+### 8.2 RU-backfill метаданных
 `title_ru` и `overview_ru` в `data/processed/{movies,tv}/items.parquet` сейчас пустые. UK-версия (`title_uk`/`overview_uk`) уже забэкфилена. RU-backfill — отдельная задача, скрипт `scripts/backfill_ru_translations.py` подготовлен.
 
 ---

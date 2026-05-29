@@ -1,7 +1,7 @@
 # Руководство по `trainer_gui` — административный GUI для dual-LightGCN стека
 
 > **Версия:** 2026-05-12 (после реализации `spec/local-training.md`)
-> **Файл:** `src/recommendation_system/models/gnn/trainer_gui.py`
+> **Файлы:** точка входа `src/recommendation_system/models/gnn/trainer_gui.py` (тонкий шим); реализация — подпакет `src/recommendation_system/models/gnn/gui/` (`theme`, `common`, `domain_stats`, `training_tab`, `dataset_tab`, `inference_tab`, `data_tab`, `app`)
 > **Аудитория:** разработчики/админы системы. Это **не** end-user UI — для пользователей есть Telegram-бот (`movie_bot.py`).
 
 ## Что это и зачем
@@ -60,7 +60,7 @@ CPU / GPU. GPU-сегмент disabled, если `torch.cuda.is_available() = Fa
 
 ## Tab 1 «Обучение»
 
-Wrap вокруг `trainer.main()`. Реализация: `trainer_gui.py:50-447` (`TrainingTab`).
+Wrap вокруг `trainer.main()`. Реализация: `gui/training_tab.py:59` (`TrainingTab`).
 
 ### Когда использовать
 
@@ -144,7 +144,7 @@ Wrap вокруг `trainer.main()`. Реализация: `trainer_gui.py:50-447
 
 ## Tab 2 «Создание датасета»
 
-Wrap вокруг `MovieDatasetProcessor.build_movie_dataset()` / `.build_tv_dataset()` (`make_dataset.py:1238, 1289`). Реализация: `trainer_gui.py:469-732` (`DatasetTab`).
+Wrap вокруг `MovieDatasetProcessor.build_movie_dataset()` / `.build_tv_dataset()` (`make_dataset.py:1238, 1289`). Реализация: `gui/dataset_tab.py:170` (`DatasetTab`).
 
 ### Когда использовать
 
@@ -182,7 +182,7 @@ Default `D:/amazon_data`. Если папки нет — пайплайн дел
 
 ### Sanity-check после сборки
 
-После успешного return `True` запускается `_dataset_sanity(domain)` (`trainer_gui.py:454-490`):
+После успешного return `True` запускается `_dataset_sanity(domain)` (`gui/dataset_tab.py:34`):
 
 - `interactions_final.parquet`, `items_metadata_final.parquet`, `id_mapping.json` существуют.
 - `interactions_final.parquet`: ≥ 100k строк (иначе warning «smoke-run?»).
@@ -202,7 +202,7 @@ Default `D:/amazon_data`. Если папки нет — пайплайн дел
 
 ## Tab 3 «Тестирование (Inference)»
 
-Офлайн-аналог бота: тот же `DualDomainEngine` + `UniversalSearchEngine`, без Telegram. Реализация: `trainer_gui.py:1217-1606` (`InferenceTab`).
+Офлайн-аналог бота: тот же `DualDomainEngine` + `UniversalSearchEngine`, без Telegram. Реализация: `gui/inference_tab.py:57` (`InferenceTab`).
 
 ### Когда использовать
 
@@ -314,7 +314,7 @@ Search-list **не перерисовывается** при смене язык
 
 ## Tab 4 «Данные»
 
-Readonly dashboard. Реализация: `trainer_gui.py:840-1156` (`DataTab` + `_collect_domain_stats`).
+Readonly dashboard. Реализация: `gui/data_tab.py:26` (`DataTab`) + `gui/domain_stats.py:138` (`_collect_domain_stats`).
 
 ### Что показывает
 
@@ -400,14 +400,15 @@ GUI этого не делает прямо. Workflow:
 
 | Что | Файл / строки |
 |---|---|
-| Точка входа GUI | `trainer_gui.py:1731 main()` |
-| Tab 1 «Обучение» | `trainer_gui.py:50-447 TrainingTab` |
-| Tab 2 «Создание датасета» | `trainer_gui.py:469-732 DatasetTab` |
-| Tab 3 «Тестирование» | `trainer_gui.py:1217-1606 InferenceTab` |
-| Tab 4 «Данные» | `trainer_gui.py:840-1156 DataTab` |
-| Sanity-check датасета | `trainer_gui.py:454-490 _dataset_sanity()` |
-| Stat collector для Tab 4 | `trainer_gui.py:855-940 _collect_domain_stats()` |
-| Логи → UI bridge | `trainer_gui.py:430-446 _QueueLogHandler` |
+| Точка входа GUI | `gui/app.py:144 main()` (+ шим `trainer_gui.py`) |
+| Дизайн-токены / фабрики кнопок | `gui/theme.py` (`COLORS`, `BUTTON_HEIGHT`, `CONTENT_MAX_WIDTH`, `primary/danger/accent/neutral/secondary_button`) |
+| Tab 1 «Обучение» | `gui/training_tab.py:59 TrainingTab` |
+| Tab 2 «Создание датасета» | `gui/dataset_tab.py:170 DatasetTab` |
+| Tab 3 «Тестирование» | `gui/inference_tab.py:57 InferenceTab` |
+| Tab 4 «Данные» | `gui/data_tab.py:26 DataTab` |
+| Sanity-check датасета | `gui/dataset_tab.py:34 _dataset_sanity()` |
+| Stat collector для Tab 4 | `gui/domain_stats.py:138 _collect_domain_stats()` |
+| Логи → UI bridge | `gui/common.py:33 _QueueLogHandler` |
 | Backend CLI | `trainer.py:445-635 main()` |
 | Backend dataset | `make_dataset.py:127 MovieDatasetProcessor` |
 | Inference loader | `inference_engine.py:31 InferenceEngine` |

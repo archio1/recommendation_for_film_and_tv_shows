@@ -137,6 +137,9 @@ copy_project.7z
 *.zip
 *.tar.gz
 
+# Temporary scratch dir
+tmp/
+
 # Local IDE/agent state
 .claude/
 
