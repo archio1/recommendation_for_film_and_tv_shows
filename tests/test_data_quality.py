@@ -91,7 +91,7 @@ def test_fringe_title_ru_is_correct():
 
     До фикса PK кэша переводов был просто INTEGER, без media_type — и
     backfill писал movie-перевод в TV-строку парка. Если этот тест падает
-    с не-Грань значением — фикс регрессировал (см. spec/cache-key-collision-fix.md).
+    с не-Грань значением — фикс коллизии кэша переводов регрессировал.
     """
     df = _load_or_skip("tv")
     fringe = df[df["tmdb_id"] == 10001705]
@@ -101,5 +101,5 @@ def test_fringe_title_ru_is_correct():
     assert title_ru, f"Fringe title_ru is empty / NULL: {title_ru!r}"
     assert "Грань" in title_ru, (
         f"Fringe title_ru should contain 'Грань', got {title_ru!r} — "
-        f"likely cache-collision regression (see spec/cache-key-collision-fix.md)"
+        f"likely cache-collision regression"
     )

@@ -11,8 +11,7 @@ parquet.
 Why this script exists separately from the uk one: Stage A added the
 title_ru column as a placeholder, but no script ever populated it. The
 production parquet has title_ru=0% non-null, so RU users hit empty
-search results and the formatter falls back to title_uk. See Stage K in
-`spec/multilingual-support.md`.
+search results and the formatter falls back to title_uk.
 
 Notes:
 - Creates `overview_ru` column on the fly if the parquet doesn't have it

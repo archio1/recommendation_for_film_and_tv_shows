@@ -129,7 +129,7 @@ def cmd_top(store: SessionStore, n: int, titles: dict) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="admin_users",
-        description="Read-only viewer for user_sessions.db (spec/admin-tools.md §2).",
+        description="Read-only viewer for user_sessions.db.",
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--list", action="store_true", help="list every user")

@@ -1,5 +1,5 @@
 """
-Read-only admin views on SessionStore (spec/admin-tools.md §3).
+Read-only admin views on SessionStore.
 
 These methods power `scripts/admin_users.py`. They never mutate state, so
 the tests exercise both happy paths and edge cases (empty DB, unknown

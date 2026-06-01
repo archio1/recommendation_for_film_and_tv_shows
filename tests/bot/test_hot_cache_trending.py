@@ -1,7 +1,7 @@
 """
 HotCache.get_trending — vote-count filter regressions.
 
-Locks down spec/bot-redesign.md §1.3 behaviour:
+Locks down the vote-count filter behaviour:
 - Default min_vote_count=100 cuts TMDB-noise (high `popularity` but
   almost no actual ratings — typical of marketing-heavy releases).
 - Override path returns everything when needed.

@@ -1,7 +1,7 @@
 # PROJECT_SNAPSHOT: Dual-LightGCN Movie/TV Recommender
 
 > **Timestamp:** 2026-05-29
-> **Status:** Two-model architecture внедрена (Этапы 1–6 из `spec/two-model-architecture.md`); локальная тренировка (`spec/local-training.md`) реализована — CLI `trainer.py` + админский GUI `trainer_gui.py` (отрефакторен в подпакет `gui/`, см. 3.7). Этап 7 (retrain) — в работе (`spec/retrain-pipeline.md`).
+> **Status:** Two-model architecture внедрена (Этапы 1–6 из `spec/two-model-architecture.md`); локальная тренировка реализована — CLI `trainer.py` + админский GUI `trainer_gui.py` (отрефакторен в подпакет `gui/`, см. 3.7). Этап 7 (retrain) — в работе (`spec/retrain-pipeline.md`).
 > **Version:** 0.9.0
 
 ---
@@ -78,7 +78,7 @@ graph TD
 
 ### 3.2 Model Layer
 - **`lightgcn.py` (v2)** — гибридная архитектура: ID-эмбеддинги + Linear Encoder для жанров/года. BPR + InfoNCE loss. Edge Dropout 0.2, Xavier init с gain=1.5, no BatchNorm.
-- **`trainer.py`** — `LightGCNTrainer`. Сейчас без CLI, обучение на Google Colab. Локальный CLI и автоматизация запланированы в `spec/local-training.md`.
+- **`trainer.py`** — `LightGCNTrainer` + полноценный CLI (`--domain`, `--data-dir`, `--output`, `--epochs` …) с metrics-sidecar и sanity-check. Исторически обучение шло на Google Colab.
 - **`compute_embeddings.py`** — CLI `--domain {movies,tv} [--to-faiss]` для пересчёта SBERT-эмбеддингов и опциональной заливки в FAISS-каталог.
 - **`faiss_bridge.py`** — `FaissCatalog` с `add()`/`search()`/`persist()`/`load()`. `IndexIDMap2(IndexFlatIP)` на L2-нормализованных эмбеддингах (cosine = dot product). Mapping `{faiss_id → (tmdb_id, media_type)}` в JSON-сайдкаре. Используется для cross-domain рекомендаций и cold-start.
 
@@ -107,7 +107,7 @@ graph TD
   - `build_text_for_embedding()` — клеит title/overview/genres для SBERT
   - `_format_genres()` — учитывает `user_prefs.language`
 - **TMDb translation cache** — отдельная SQLite-таблица. Поддерживает RU/UK/EN с per-user fallback (`requested_lang` → `en`).
-- **Backfill scripts:** `scripts/backfill_uk_translations.py` (✅ выполнен), `scripts/backfill_ru_translations.py` (⚠️ запланирован — `title_ru`/`overview_ru` сейчас пустые в production-parquet).
+- **Backfill scripts:** `scripts/backfill_uk_translations.py` (✅ выполнен), `scripts/backfill_ru_translations.py` (✅ выполнен — `title_ru`/`overview_ru` забэкфилены в production-parquet).
 - **SBERT-модель:** `paraphrase-multilingual-MiniLM-L12-v2` — обрабатывает все три языка в одном векторном пространстве.
 
 ### 3.6 Admin Tools
@@ -182,13 +182,10 @@ graph TD
 
 ## 8. В работе (запланировано, не реализовано)
 
-> ✅ **Завершено:** Локальная тренировка (`spec/local-training.md`) — `trainer.py` доведён до полноценного CLI (`--domain`, `--data-dir`, `--output`, `--epochs` …) с metrics-sidecar и sanity-check; `trainer_gui.py` (Flet) переписан под dual-domain (вкладки Обучение/Создание датасета/Тестирование/Данные на общем `DualDomainEngine`) и отрефакторен в подпакет `gui/` (см. 3.7).
+> ✅ **Завершено:** Локальная тренировка — `trainer.py` доведён до полноценного CLI (`--domain`, `--data-dir`, `--output`, `--epochs` …) с metrics-sidecar и sanity-check; `trainer_gui.py` (Flet) переписан под dual-domain (вкладки Обучение/Создание датасета/Тестирование/Данные на общем `DualDomainEngine`) и отрефакторен в подпакет `gui/` (см. 3.7).
 
 ### 8.1 Retrain Pipeline — `spec/retrain-pipeline.md`
 **Цель:** `scripts/retrain.py` — оркестратор полного цикла (Trakt → make_dataset → trainer × 2 → embeddings → FAISS) с опциональными шагами (`--skip-trakt`, `--skip-raw`, `--skip-faiss`, `--domain`). Production-pointer `models/CURRENT.json`. Makefile-цели `retrain` / `retrain-quick` / `retrain-dry`. Запуск вручную раз в 1–3 месяца, без CI/cron.
-
-### 8.2 RU-backfill метаданных
-`title_ru` и `overview_ru` в `data/processed/{movies,tv}/items.parquet` сейчас пустые. UK-версия (`title_uk`/`overview_uk`) уже забэкфилена. RU-backfill — отдельная задача, скрипт `scripts/backfill_ru_translations.py` подготовлен.
 
 ---
 

@@ -8,8 +8,6 @@ Items appearing in both panels are highlighted with a green border, making the
 overlap visible to a non-technical viewer.
 
 Output: a single offline HTML at reports/figures/graph_neighbors_demo.html.
-
-See spec/graph-neighbors-visualization.md.
 """
 from __future__ import annotations
 
@@ -514,7 +512,7 @@ def _render_html(movie_results, tv_results, output_path: Path) -> None:
   <div id="tv" class="tabcontent" style="display:none">
     {''.join(tv_divs) if tv_divs else '<p style="text-align:center;color:#6c757d">Нет данных по сериалам</p>'}
   </div>
-  <footer>Сгенерировано {timestamp} · spec/graph-neighbors-visualization.md</footer>
+  <footer>Сгенерировано {timestamp}</footer>
   {_TAB_JS}
 </body>
 </html>"""

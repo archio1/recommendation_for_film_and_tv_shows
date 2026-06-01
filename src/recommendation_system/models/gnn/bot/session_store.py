@@ -112,7 +112,7 @@ class SessionStore:
         )
         self.conn.commit()
 
-    # -- read-only admin views (see spec/admin-tools.md §3) -----------------
+    # -- read-only admin views ----------------------------------------------
 
     def get_all_users(self) -> list[tuple[int, str, int, str | None]]:
         """Return (user_id, lang, likes_count, last_added_at) per user.

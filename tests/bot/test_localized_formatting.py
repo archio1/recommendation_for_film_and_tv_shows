@@ -218,7 +218,7 @@ def test_format_title_die_hard_ru_user_regression():
 
 
 # ---------------------------------------------------------------------------
-# _format_title — IMDb / TMDB link wrapping (spec/bot-redesign.md §1.2)
+# _format_title — IMDb / TMDB link wrapping
 # ---------------------------------------------------------------------------
 
 
@@ -357,7 +357,7 @@ def test_movie_bot_formatter_contract():
     from pathlib import Path
 
     bot_path = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "src"
         / "recommendation_system"
         / "models"
@@ -390,7 +390,7 @@ def test_movie_bot_formatter_contract():
         "GENRE_EN_TO_RU is the original bug."
     )
 
-    # _format_title: IMDb-link wrapping (spec/bot-redesign.md §1.2).
+    # _format_title: IMDb-link wrapping.
     # The local _format_title mirror in this file matches movie_bot's
     # behaviour — these guards fail loudly if the bot's logic drifts.
     expected_link_pieces = [

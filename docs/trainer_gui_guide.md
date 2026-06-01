@@ -1,6 +1,6 @@
 # Руководство по `trainer_gui` — административный GUI для dual-LightGCN стека
 
-> **Версия:** 2026-05-12 (после реализации `spec/local-training.md`)
+> **Версия:** 2026-05-12 (после реализации локальной тренировки)
 > **Файлы:** точка входа `src/recommendation_system/models/gnn/trainer_gui.py` (тонкий шим); реализация — подпакет `src/recommendation_system/models/gnn/gui/` (`theme`, `common`, `domain_stats`, `training_tab`, `dataset_tab`, `inference_tab`, `data_tab`, `app`)
 > **Аудитория:** разработчики/админы системы. Это **не** end-user UI — для пользователей есть Telegram-бот (`movie_bot.py`).
 
@@ -416,7 +416,6 @@ GUI этого не делает прямо. Workflow:
 
 ## См. также
 
-- `spec/local-training.md` — спецификация, по которой собран GUI.
 - `spec/two-model-architecture.md` — почему movies и tv разделены.
 - `spec/retrain-pipeline.md` (будущее) — что будет вместо ручного train в Tab 1.
 - `movie_bot.py` — production-вариант того же `DualDomainEngine`.
