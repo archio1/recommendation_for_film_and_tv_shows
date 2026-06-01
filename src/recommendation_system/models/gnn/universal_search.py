@@ -469,6 +469,48 @@ class EnhancedContentEngine:
         vec = self._live_encoder.encode(text, normalize_embeddings=True)
         return vec.astype(np.float32)
 
+    def select_candidates_by_semantics(self, liked, candidate_meta, top_n=3000):
+        """Pick the top-N most semantically-relevant candidate rows.
+
+        A popularity-sorted head() acts as a popularity *filter* once the
+        catalog outgrows top_n (e.g. 18k movies → only the most-popular ~17%
+        ever enter the pool), which collapses recommendations toward
+        blockbusters. Ranking the masked candidates by cosine to the user's
+        semantic profile lets genre-relevant but less-popular items reach the
+        ranker — the original intent of "find hidden gems similar by meaning".
+
+        Popularity remains the tie-breaker / fallback ordering, so when no
+        usable embeddings exist the behaviour is identical to the old head().
+        """
+        base = candidate_meta.sort_values('popularity', ascending=False)
+        if base.empty or self.embeddings is None:
+            return base.head(top_n)
+
+        vecs = [v for v in (self._get_embedding(i) for i in liked) if v is not None]
+        if not vecs:
+            return base.head(top_n)
+        prof = np.mean(vecs, axis=0)
+        pnorm = np.linalg.norm(prof)
+        if pnorm < 1e-8:
+            return base.head(top_n)
+        prof = prof / pnorm
+
+        item_ids = base['item_id'].to_numpy()
+        emb_idx = np.fromiter(
+            (self.item_id_to_emb_idx.get(int(i), -1) for i in item_ids),
+            dtype=np.int64, count=len(item_ids),
+        )
+        sims = np.full(len(item_ids), -np.inf, dtype=np.float32)
+        has = emb_idx >= 0
+        if has.any():
+            mat = self.embeddings[emb_idx[has]]
+            norms = np.linalg.norm(mat, axis=1) + 1e-8
+            sims[has] = (mat @ prof) / norms
+        # Relevance primary; stable sort keeps popularity order within ties
+        # and for any item lacking an embedding (sim = -inf sinks to the end).
+        order = np.argsort(-sims, kind="stable")
+        return base.iloc[order].head(top_n)
+
     def compute_similarity(self, liked: List[UniversalMediaItem], candidates: List[UniversalMediaItem]) -> List[Tuple[UniversalMediaItem, float]]:
         if not liked or not candidates: return []
 
@@ -559,6 +601,9 @@ class UniversalSearchEngine:
         self.metadata = metadata
         self.inference_engine = inference_engine
         self.model_num_items = model_num_items
+        # LightGCN popularity de-bias strength (0 = off). Tunable per engine;
+        # see InferenceEngine._popularity_penalty.
+        self.popularity_debias = 0.0
 
         self.tmdb_to_item_id = {int(r['tmdb_id']): int(r['item_id']) for _, r in metadata.dropna(subset=['tmdb_id']).iterrows()}
 
@@ -767,7 +812,10 @@ class UniversalSearchEngine:
                 liked_trained = [i.item_id for i in intent_group if i.has_embeddings]
                 if liked_trained:
                     # Берем чуть больше, чтобы потом отфильтровать дубликаты
-                    gcn_recs = self.inference_engine.get_recommendations(liked_trained, top_k=quota * 2)
+                    gcn_recs = self.inference_engine.get_recommendations(
+                        liked_trained, top_k=quota * 2,
+                        popularity_debias=self.popularity_debias,
+                    )
                     for r in gcn_recs:
                         res_row = self.metadata[self.metadata['item_id'] == r['item_id']]
                         if not res_row.empty:
@@ -785,9 +833,12 @@ class UniversalSearchEngine:
                                                                                           index=self.metadata.index)
                 mask &= ~self.metadata['tmdb_id'].isin(seen_recs)
 
-                # Увеличиваем пул кандидатов до 3000 самых популярных
-                # Это позволит найти "скрытые жемчужины", которые похожи по смыслу, но не в топ-500
-                cand_rows = self.metadata[mask].sort_values('popularity', ascending=False).head(3000)
+                # Пул кандидатов — top-3000 по семантической близости к лайкам,
+                # а не по популярности: на большом каталоге популярностный head()
+                # превращался в фильтр и схлопывал выдачу в блокбастеры.
+                cand_rows = self.content_recommender.select_candidates_by_semantics(
+                    intent_group, self.metadata[mask], top_n=3000
+                )
                 candidates = [self._row_to_universal(r) for _, r in cand_rows.iterrows()]
 
                 # Вычисляем сходство (здесь работают эмбеддинги, ключевые слова и Media DNA)

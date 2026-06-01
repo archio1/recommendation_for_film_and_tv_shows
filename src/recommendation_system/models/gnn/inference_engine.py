@@ -43,6 +43,7 @@ class InferenceEngine:
         self.id_mapping = None
         self.item_features = None  # Для гибридной модели
         self.is_loaded = False
+        self._pop_penalty = None  # cached popularity-debias tensor (lazy)
 
     def _prepare_features(self, expected_genres):
         """Подготовка фичей, строго подогнанная под размер весов модели"""
@@ -159,7 +160,31 @@ class InferenceEngine:
 
         return matches.head(limit)[['title', 'year', 'item_id']].to_dict('records')
 
-    def get_recommendations(self, liked_item_ids: list, top_k: int = 8):
+    def _popularity_penalty(self, n_items: int):
+        """Per-item popularity penalty in [0, 1], aligned to item_id index.
+
+        Normalized log1p(vote_count) — the same signal the popularity-bias
+        tests treat as "popular". Subtracted from LightGCN cosine scores so
+        globally-popular items (central in the co-watch graph, hence near
+        every user vector) stop dominating every recommendation list.
+        Cached after first build.
+        """
+        if self._pop_penalty is not None and self._pop_penalty.shape[0] == n_items:
+            return self._pop_penalty
+        vc = np.zeros(n_items, dtype=np.float64)
+        if 'vote_count' in self.metadata.columns:
+            ids = self.metadata['item_id'].to_numpy()
+            counts = self.metadata['vote_count'].fillna(0).to_numpy()
+            in_range = ids < n_items
+            vc[ids[in_range]] = counts[in_range]
+        pen = np.log1p(vc)
+        mx = pen.max()
+        if mx > 0:
+            pen = pen / mx
+        self._pop_penalty = torch.tensor(pen, dtype=torch.float32, device=self.device)
+        return self._pop_penalty
+
+    def get_recommendations(self, liked_item_ids: list, top_k: int = 8, popularity_debias: float = 0.0):
         if not self.is_loaded or not liked_item_ids:
             return []
 
@@ -177,6 +202,11 @@ class InferenceEngine:
 
         scores = torch.matmul(user_vector, item_emb_norm.t()).squeeze(0)
         scores[selected_indices] = -float('inf')
+
+        # Popularity de-bias: push down globally-popular items so the list
+        # reflects "popular among users like you", not the IMDb top-250.
+        if popularity_debias and popularity_debias > 0:
+            scores = scores - popularity_debias * self._popularity_penalty(scores.shape[0])
 
         candidate_count = 100
         top_scores, top_indices = torch.topk(scores, min(candidate_count, len(scores)))

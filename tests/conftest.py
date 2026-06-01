@@ -112,7 +112,10 @@ def _build_real_engine(dataset_dir: Path, checkpoint: Path):
 
 @pytest.fixture(scope="session")
 def movies_engine_real():
-    return _build_real_engine(MOVIES_DIR, MOVIES_CHECKPOINT)
+    # Mirror production (movie_bot): movies engine runs with popularity de-bias.
+    engine = _build_real_engine(MOVIES_DIR, MOVIES_CHECKPOINT)
+    engine.popularity_debias = 0.5
+    return engine
 
 
 @pytest.fixture(scope="session")

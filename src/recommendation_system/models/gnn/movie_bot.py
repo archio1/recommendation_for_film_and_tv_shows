@@ -103,6 +103,10 @@ def _build_engine(
 
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 movies_engine = _build_engine(MOVIES_DIR, MOVIES_CHECKPOINT, CACHE_DIR)
+# Movies LightGCN collapses toward globally-popular titles (top-IMDb to
+# everyone); a popularity penalty restores genre diversity. TV stays at 0 —
+# its small catalog shows no such collapse. See UniversalSearchEngine.
+movies_engine.popularity_debias = 0.5
 tv_engine = _build_engine(TV_DIR, TV_CHECKPOINT, CACHE_DIR)
 
 if FAISS_INDEX.exists() and FAISS_META.exists():
