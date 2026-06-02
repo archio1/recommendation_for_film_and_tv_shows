@@ -96,7 +96,10 @@ class InferenceEngine:
 
             # Оставляем только те записи, которые есть в весах модели
             self.metadata = full_metadata[full_metadata['item_id'] < model_num_items].copy()
-            print(f"📊 InferenceEngine: метаданные ограничены до {model_num_items} (trained items)")
+            # No emoji here: a Windows console under cp1251 raises
+            # UnicodeEncodeError on it, which aborts load_resources(). Cyrillic
+            # itself encodes fine in cp1251, so the message text is kept.
+            print(f"InferenceEngine: метаданные ограничены до {model_num_items} (trained items)")
 
             embedding_dim = state_dict['user_embedding.weight'].shape[1]
             num_users = state_dict['user_embedding.weight'].shape[0]
