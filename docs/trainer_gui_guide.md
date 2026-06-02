@@ -1,119 +1,143 @@
-# Руководство по `trainer_gui` — административный GUI для dual-LightGCN стека
+# `trainer_gui` Guide — Admin GUI for the dual-LightGCN stack
 
-> **Версия:** 2026-05-12 (после реализации локальной тренировки)
-> **Файлы:** точка входа `src/recommendation_system/models/gnn/trainer_gui.py` (тонкий шим); реализация — подпакет `src/recommendation_system/models/gnn/gui/` (`theme`, `common`, `domain_stats`, `training_tab`, `dataset_tab`, `inference_tab`, `data_tab`, `app`)
-> **Аудитория:** разработчики/админы системы. Это **не** end-user UI — для пользователей есть Telegram-бот (`movie_bot.py`).
+> **Version:** 2026-05-12 (after local training was implemented)
+> **Files:** entry point `src/recommendation_system/models/gnn/trainer_gui.py`
+> (thin shim); implementation in the `src/recommendation_system/models/gnn/gui/`
+> subpackage (`theme`, `common`, `domain_stats`, `training_tab`, `dataset_tab`,
+> `inference_tab`, `data_tab`, `app`)
+> **Audience:** system developers/admins. This is **not** an end-user UI — end
+> users have the Telegram bot (`movie_bot.py`).
 
-## Что это и зачем
+## What it is and why
 
-GUI на Flet (desktop), 4 вкладки. Один процесс — одна установка стека. Используется для:
+A Flet desktop GUI with 4 tabs. One process = one stack installation. Used for:
 
-- локального обучения LightGCN-моделей вместо Colab (для итераций по гиперпараметрам / починки регрессий);
-- сборки датасетов через UI вместо CLI;
-- офлайн-тестирования рекомендаций (тот же `DualDomainEngine`, что и в боте, но без Telegram);
-- быстрого взгляда на состояние датасетов и моделей.
+- training LightGCN models locally (for hyperparameter iteration / fixing regressions);
+- building datasets through the UI instead of the CLI;
+- offline recommendation testing (the same `DualDomainEngine` as the bot, but without Telegram);
+- a quick look at dataset and model state.
 
-**Что GUI НЕ делает:**
+**What the GUI does NOT do:**
 
-- не запускает Trakt-collector (это 2 суток сбора, отдельный скрипт);
-- не пушит модели в бот / production — это ручной шаг;
-- не делает hyperparameter sweep — крутите параметры вручную;
-- не имеет hot-swap моделей: при смене device или checkpoint — перезапуск GUI;
-- не отменяет сборку датасета (`make_dataset` не поддерживает cancel-флаг).
+- it does not run the Trakt collector (that's a ~2-day crawl, a separate script);
+- it does not push models to the bot / production — that's a manual step;
+- it does not do a hyperparameter sweep — tune parameters by hand;
+- no model hot-swap: changing device or checkpoint requires a GUI restart;
+- it does not cancel a dataset build (`make_dataset` has no cancel flag).
 
 ---
 
-## Запуск
+## First run
+
+On a fresh checkout you have **no datasets and no models** yet. The order is:
+
+1. **Build a dataset** — Tab 2 ("Dataset build"). You need the raw sources in place
+   first; see **[data_sources.md](data_sources.md)** for exactly which datasets are
+   **required**, which are **optional**, whether you can plug in your own, and the
+   expected formats.
+2. **Train a model** — Tab 1 ("Training") on that dataset.
+3. **Test it** — Tab 3 ("Testing") before rolling it out to the bot.
+
+Tab 4 ("Data") shows what you currently have. If a tab complains about missing
+parquet/checkpoints, you've skipped a step above.
+
+---
+
+## Launch
 
 ```powershell
-# Из корня репозитория. PYTHONPATH=src обязателен.
+# From the repo root. PYTHONPATH=src is required.
 $env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.trainer_gui
 ```
 
-При старте GUI:
+On startup the GUI:
 
-1. Импортирует `flet`, `torch` (5-10с холодный старт).
-2. Создаёт 4 вкладки. **Движки моделей НЕ загружаются** — это происходит лениво в Tab 3 при первом запросе.
-3. Tab 4 (Данные) сразу читает parquet/sidecar и показывает статистику.
+1. Imports `flet`, `torch` (5–10s cold start).
+2. Creates 4 tabs. **Model engines are NOT loaded** — that happens lazily in Tab 3 on the first request.
+3. Tab 4 (Data) immediately reads parquet/sidecar and shows statistics.
 
-Окно открывается ~10-15с от запуска команды. Если не открылось — проверь `python` процесс в `tasklist`.
+The window opens ~10–15s after the command. If it doesn't, check for the `python`
+process in `tasklist`.
 
 ---
 
-## Общий header
+## Global header
 
-Сверху над вкладками — два глобальных контрола:
+Above the tabs are two global controls:
 
 ### Domain switcher (Dropdown)
 
-`movies` / `tv`. Используется **только** Tab 1 (Обучение) — определяет какой датасет/модель будут собираться. Tab 2 (Dataset) и Tab 3 (Inference) имеют **свои** локальные dropdown'ы. Tab 4 (Data) всегда показывает оба домена.
+`movies` / `tv`. Used **only** by Tab 1 (Training) — it decides which dataset/model
+is built. Tab 2 (Dataset) and Tab 3 (Inference) have **their own** local dropdowns.
+Tab 4 (Data) always shows both domains.
 
 ### Device selector (SegmentedButton)
 
-CPU / GPU. GPU-сегмент disabled, если `torch.cuda.is_available() = False`.
+CPU / GPU. The GPU segment is disabled if `torch.cuda.is_available() = False`.
 
-- **Tab 1:** значение передаётся в `trainer.main(--device=...)` без override. CPU = ~10× медленнее GPU.
-- **Tab 3:** значение фиксируется при **первой** загрузке движков. Сменишь после — перезапусти GUI.
-- Tab 2 / Tab 4: device не используется.
+- **Tab 1:** the value is passed to `trainer.main(--device=...)` with no override. CPU = ~10× slower than GPU.
+- **Tab 3:** the value is fixed at the **first** engine load. Change it afterwards → restart the GUI.
+- Tab 2 / Tab 4: device is not used.
 
 ---
 
-## Tab 1 «Обучение»
+## Tab 1 "Training"
 
-Wrap вокруг `trainer.main()`. Реализация: `gui/training_tab.py:59` (`TrainingTab`).
+A wrapper around `trainer.main()`. Implementation: `gui/training_tab.py:59` (`TrainingTab`).
 
-### Когда использовать
+### When to use
 
-- Натренировать новую версию модели локально (Colab больше не обязателен).
-- Подобрать гиперпараметры (быстрее чем по очереди в Colab).
-- Починить регрессию: «после правки `lightgcn.py` старый чекпоинт всё ещё работает, новый — нет».
+- Train a new model version locally.
+- Tune hyperparameters.
+- Fix a regression: "after editing `lightgcn.py` the old checkpoint still works, the new one doesn't".
 
-### Поля гиперпараметров
+### Hyperparameter fields
 
-| Поле | Default | Что меняет |
+| Field | Default | What it changes |
 |---|---|---|
-| **Эпохи** | 30 | Максимум эпох. Early stopping (`patience`) обычно режет раньше. |
-| **Батч** | 2048 | Размер минибатча. На CPU — поставь 512; на GPU 12GB — 2048 ок; 24GB — 4096. |
-| **LR** | 0.002 | Learning rate. Стандартный Adam, не трогай если не знаешь зачем. |
-| **Embedding** | 32 | Размерность user/item векторов. 16-64 разумно; 128 → переобучение на нашем размере. |
-| **Слои GCN** | 2 | Глубина LightGCN. 1-3 разумно; >4 — overshoot, размывание сигнала. |
-| **Patience** | 3 | Сколько эпох ждать улучшения recall@10 до early-stop. |
-| **Eval every** | 5 | Каждые N эпох считать recall/ndcg на val. Дороже → реже. |
+| **Epochs** | 30 | Max epochs. Early stopping (`patience`) usually cuts it shorter. |
+| **Batch** | 2048 | Minibatch size. On CPU use 512; on a 12GB GPU 2048 is fine; 24GB → 4096. |
+| **LR** | 0.002 | Learning rate. Standard Adam; don't touch unless you know why. |
+| **Embedding** | 32 | user/item vector dimension. 16–64 is sensible; 128 → overfits at our scale. |
+| **GCN layers** | 2 | LightGCN depth. 1–3 sensible; >4 → overshoot, signal washout. |
+| **Patience** | 3 | How many epochs to wait for recall@10 improvement before early-stop. |
+| **Eval every** | 5 | Compute recall/ndcg on val every N epochs. More expensive → less often. |
 
-Тултипы на полях показывают defaults; при сомнении — оставь как есть.
+Field tooltips show the defaults; when in doubt, leave them as-is.
 
-### Старт / Стоп
+### Start / Stop
 
-- **Старт** запускает `trainer.main(argv, on_epoch_end=..., stop_flag=...)` в `threading.Thread`. UI остаётся отзывчивым.
-- **Стоп** ставит флаг → next epoch прерывается. Уже завершённые эпохи сохраняются в sidecar.
+- **Start** runs `trainer.main(argv, on_epoch_end=..., stop_flag=...)` in a `threading.Thread`. The UI stays responsive.
+- **Stop** sets a flag → the next epoch aborts. Already-finished epochs are saved to the sidecar.
 
-### Что показывают метрики и чарт
+### What the metrics and chart show
 
-| Метрика | Что это |
+| Metric | What it is |
 |---|---|
-| **Эпоха** | текущая / всего. Прогресс-бар по эпохам. |
-| **Лучшая эпоха** | эпоха с максимальным recall@10. Чекпоинт сохраняется именно с этой эпохи. |
-| **Loss** | BPR loss на батче. Должен монотонно падать; рост = LR слишком высокий. |
-| **Recall@10 / NDCG@10** | измеряются раз в `eval_every` эпох на validation split. |
-| **Loss-чарт** | каждая точка = эпоха. Если флэт после первых 5 — модель не учится (слишком низкий LR / битый граф). |
+| **Epoch** | current / total. Progress bar over epochs. |
+| **Best epoch** | epoch with max recall@10. The checkpoint is saved from this epoch. |
+| **Loss** | BPR loss on the batch. Should fall monotonically; a rise = LR too high. |
+| **Recall@10 / NDCG@10** | measured every `eval_every` epochs on the validation split. |
+| **Loss chart** | each point = an epoch. Flat after the first 5 → the model isn't learning (LR too low / broken graph). |
 
-### Sanity-check и баннер результата
+### Sanity check and result banner
 
-После train `trainer.main` валидирует модель:
+After training, `trainer.main` validates the model:
 
-- `recall@10 > 0.05` (низкий threshold; реальные модели > 0.2).
-- `||user_emb||.mean() > 0.01` (эмбеддинги не все нули).
+- `recall@10 > 0.05` (low threshold; real models > 0.2).
+- `||user_emb||.mean() > 0.01` (embeddings aren't all zeros).
 - `||item_emb||.mean() > 0.01`.
 
-Результат:
+Result:
 
-- **Зелёный** «sanity-check пройден» → модель ок, sidecar записан, auto-bump указывает на новый чекпоинт.
-- **Красный** «sanity-check ПРОВАЛЕН (см. sidecar)» → exit code 1, sidecar **записан** с `passed=false` и списком failures. Не используйте такую модель в боте.
-- **Красный** «Ошибка обучения (rc=...)» → exception. Смотри лог внизу.
+- **Green** "sanity-check passed" → model OK, sidecar written, auto-bump points to the new checkpoint.
+- **Red** "sanity-check FAILED (see sidecar)" → exit code 1, sidecar **is** written with `passed=false` and a failure list. Do not use such a model in the bot.
+- **Red** "Training error (rc=...)" → exception. Check the log at the bottom.
 
 ### Sidecar JSON
 
-После каждого train рядом с `.pt` пишется JSON-сосед — `lightgcn_{domain}_best_v{N}.json`:
+After each train, a JSON sibling is written next to the `.pt` —
+`lightgcn_{domain}_best_v{N}.json`:
 
 ```json
 {
@@ -130,292 +154,320 @@ Wrap вокруг `trainer.main()`. Реализация: `gui/training_tab.py:5
 }
 ```
 
-Кнопка «Открыть sidecar.json» — открывает в текущей системной программе (Notepad / VS Code). Используй чтобы сверить гиперы между запусками.
+The "Open sidecar.json" button opens it in the system default app (Notepad / VS
+Code). Use it to compare hyperparameters across runs.
 
-### Auto-bump версий
+### Version auto-bump
 
-`trainer.py` сканирует `models/{domain}/lightgcn_{domain}_best_v*.pt` и подбирает следующий `vN+1`. Старые версии **не удаляются** — чисти руками когда диск кончается.
+`trainer.py` scans `models/{domain}/lightgcn_{domain}_best_v*.pt` and picks the
+next `vN+1`. Old versions are **not** deleted — clean them up by hand when disk runs out.
 
-### Логи
+### Logs
 
-Внизу вкладки — окно с логами `trainer.py` через `logging.Handler`. Ошибки красные, warnings жёлтые. До 500 строк (старые удаляются автоматом).
+At the bottom of the tab — a window with `trainer.py` logs via a `logging.Handler`.
+Errors red, warnings yellow. Up to 500 lines (older ones auto-trimmed).
 
 ---
 
-## Tab 2 «Создание датасета»
+## Tab 2 "Dataset build"
 
-Wrap вокруг `MovieDatasetProcessor.build_movie_dataset()` / `.build_tv_dataset()` (`make_dataset.py:1238, 1289`). Реализация: `gui/dataset_tab.py:170` (`DatasetTab`).
+A wrapper around `MovieDatasetProcessor.build_movie_dataset()` /
+`.build_tv_dataset()` (`make_dataset.py:1238, 1289`). Implementation:
+`gui/dataset_tab.py:170` (`DatasetTab`).
 
-### Когда использовать
+### When to use
 
-- После сбора свежих Trakt-данных (`trakt_*.csv` обновлены).
-- После изменения схемы parquet (новые колонки, bilingual поля).
-- При первом разворачивании проекта на новой машине.
+- After collecting fresh Trakt data (`trakt_*.csv` updated).
+- After changing the parquet schema (new columns, bilingual fields).
+- On first deployment to a new machine.
 
-Обычная итерация — раз в недели, не в день.
+A typical iteration is weekly, not daily.
 
-### Источники (readonly)
+### Sources (readonly)
 
-Показывает где лежат raw-данные:
+Shows where the raw data lives:
 
 - **Movies:** `data/raw/ml-32m/` (MovieLens 32M) + `data/raw/TMDB_movie_dataset_v11.csv`
 - **TV:** `data/raw/trakt_shows.csv` + `data/raw/trakt_interactions.csv`
-- **Amazon (опционально):** см. поле ниже.
+- **Amazon (optional):** see the field below.
 
-### Domain dropdown (локальный)
+### Domain dropdown (local)
 
-`movies` / `tv` / `all`. **Не использует** глобальный domain из header (там есть только movies/tv).
+`movies` / `tv` / `all`. **Does not** use the global header domain (which only has movies/tv).
 
-- `all` → последовательно: сначала movies, потом tv. Если movies упадёт — tv не запустится.
+- `all` → sequentially: movies first, then tv. If movies fails, tv won't run.
 
 ### Amazon dir
 
-Default `D:/amazon_data`. Если папки нет — пайплайн делает graceful fallback (без Amazon-интеракций, просто лог `warning`). Чтобы выключить совсем — оставь поле пустым.
+Default `D:/amazon_data`. If the folder is absent, the pipeline does a graceful
+fallback (no Amazon interactions, just a `warning` log). To disable it entirely,
+leave the field empty.
 
-### Прогресс и логи
+### Progress and logs
 
-- **ProgressBar — indeterminate** (бегущая полоса). `make_dataset` не отдаёт numeric callbacks, поэтому % посчитать нельзя.
-- **Status text** — короткий статус (последняя «стадия»: `Сборка movies...` / `Сборка tv...`).
-- **Логи** — реальный вывод `make_dataset.logger`. Видно прогресс через INFO-сообщения.
+- **ProgressBar — indeterminate** (running bar). `make_dataset` gives no numeric callbacks, so a % can't be computed.
+- **Status text** — a short status (last "stage": `Building movies...` / `Building tv...`).
+- **Logs** — real `make_dataset.logger` output. Progress is visible via INFO messages.
 
-Сборка movies на полном датасете занимает ~30-60 минут (TMDB API hits для keywords + filter + k-core). TV — быстрее. Кнопка «Стоп» декоративная — `make_dataset` не имеет cancel-флага. **Если запустил по ошибке — придётся ждать или убить процесс целиком.**
+A full movie build takes ~30–60 minutes (TMDB API hits for keywords + filtering +
+k-core). TV is faster. The "Stop" button is decorative — `make_dataset` has no
+cancel flag. **If you start it by mistake, you must wait or kill the whole process.**
 
-### Sanity-check после сборки
+### Post-build sanity check
 
-После успешного return `True` запускается `_dataset_sanity(domain)` (`gui/dataset_tab.py:34`):
+After a successful `True` return, `_dataset_sanity(domain)` runs (`gui/dataset_tab.py:34`):
 
-- `interactions_final.parquet`, `items_metadata_final.parquet`, `id_mapping.json` существуют.
-- `interactions_final.parquet`: ≥ 100k строк (иначе warning «smoke-run?»).
-- `items_metadata_final.parquet`: колонки `tmdb_id`, `title`, `genres` присутствуют; нет дубликатов `tmdb_id`.
-- `id_mapping.json`: `num_users` и `num_items` (или `num_trained_items`) — int > 0.
+- `interactions_final.parquet`, `items_metadata_final.parquet`, `id_mapping.json` exist.
+- `interactions_final.parquet`: ≥ 100k rows (otherwise a "smoke run?" warning).
+- `items_metadata_final.parquet`: `tmdb_id`, `title`, `genres` columns present; no duplicate `tmdb_id`.
+- `id_mapping.json`: `num_users` and `num_items` (or `num_trained_items`) — int > 0.
 
-Результат:
+Result:
 
-- **Зелёный** «✅ Sanity-check пройден» → используй датасет.
-- **Красный** «⚠ Sanity-check ПРОВАЛЕН» с конкретным списком failures → не доверяй датасету, разбирайся.
+- **Green** "✅ Sanity-check passed" → use the dataset.
+- **Red** "⚠ Sanity-check FAILED" with a concrete failure list → don't trust the dataset, investigate.
 
-### Автообновление Tab 4
+### Tab 4 auto-refresh
 
-После успеха `data_tab.refresh()` вызывается автоматически — переключись на Tab 4, увидишь свежие mtime/числа.
+On success, `data_tab.refresh()` is called automatically — switch to Tab 4 to see
+fresh mtimes/numbers.
 
 ---
 
-## Tab 3 «Тестирование (Inference)»
+## Tab 3 "Testing (Inference)"
 
-Офлайн-аналог бота: тот же `DualDomainEngine` + `UniversalSearchEngine`, без Telegram. Реализация: `gui/inference_tab.py:57` (`InferenceTab`).
+An offline analog of the bot: the same `DualDomainEngine` + `UniversalSearchEngine`,
+without Telegram. Implementation: `gui/inference_tab.py:57` (`InferenceTab`).
 
-### Когда использовать
+### When to use
 
-- После train новой модели — проверить, что recommendations не сломались.
-- При отладке `DualDomainEngine` (cross-domain, FAISS, cold-start).
-- Для bilingual-проверки: «нашёл ли поиск Володар Перснів».
-- Для smoke-теста перед деплоем в бот.
+- After training a new model — check that recommendations aren't broken.
+- When debugging `DualDomainEngine` (cross-domain, FAISS, cold-start).
+- For a bilingual check: "did search find Володар Перснів".
+- For a smoke test before deploying to the bot.
 
 ### Layout
 
-Левая колонка (≈40%): **Поиск + Избранное (seed)**.
-Правая (≈60%): **Рекомендации + 4 кнопки + статус**.
+Left column (≈40%): **Search + Favorites (seed)**.
+Right (≈60%): **Recommendations + 4 buttons + status**.
 
-### Lazy-init движков
+### Lazy engine init
 
-Самое важное: при создании Tab движки **НЕ загружаются** (это 30-60с на CPU, ~30с на GPU). Загрузка стартует при первом нажатии:
+Most important: when the tab is created, engines are **NOT** loaded (that's 30–60s
+on CPU, ~30s on GPU). Loading starts on the first press of:
 
-- любой кнопки `/recs_*` (если ещё не загружено), или
-- Поиска (если активный domain ещё не загружен).
+- any `/recs_*` button (if not yet loaded), or
+- Search (if the active domain isn't loaded yet).
 
-В правом нижнем углу — статус `router_status`:
+In the bottom-right is the `router_status`:
 
-- `⏳ Движки не загружены (загрузятся по первому /recs_*)` — начальное состояние.
-- `⏳ Movies: загрузка checkpoint...` → `⏳ TV: ...` → `⏳ FAISS: ...` — прогресс.
-- `✅ Движки загружены` — готово.
-- `❌ Ошибка загрузки движков` — traceback в области рекомендаций.
+- `⏳ Engines not loaded (load on first /recs_*)` — initial state.
+- `⏳ Movies: loading checkpoint...` → `⏳ TV: ...` → `⏳ FAISS: ...` — progress.
+- `✅ Engines loaded` — ready.
+- `❌ Engine load error` — traceback in the recommendations area.
 
-Все 4 кнопки disabled во время загрузки. Device берётся из header **в момент** загрузки.
+All 4 buttons are disabled during loading. Device is taken from the header **at the
+moment** of loading.
 
-### Выбор чекпоинтов
+### Checkpoint selection
 
-`InferenceTab` вызывает `_collect_domain_stats(domain).last_train_checkpoint` (см. Tab 4) — берёт самый свежий sidecar JSON и читает оттуда имя `.pt`. Fallback — хардкод `lightgcn_{domain}_best_v4.pt` (то же, что использует `movie_bot.py`).
+`InferenceTab` calls `_collect_domain_stats(domain).last_train_checkpoint` (see Tab 4)
+— it takes the freshest sidecar JSON and reads the `.pt` name from it. Fallback is
+the hardcoded `lightgcn_{domain}_best_v4.pt` (the same one `movie_bot.py` uses).
 
-Чтобы InferenceTab подхватил новую модель: натренируй на Tab 1 → закрой GUI → открой заново. Hot-swap не поддерживается.
+For InferenceTab to pick up a new model: train on Tab 1 → close the GUI → reopen it.
+Hot-swap is not supported.
 
-### Поиск (bilingual)
+### Search (bilingual)
 
-- **Dropdown «Каталог»:** `movies` или `tv` — определяет в каком каталоге искать.
-- **Поле поиска:** EN / RU / UK любой строкой.
-- **Кнопка 🔍 / Enter** → `engine.search(query, limit=20)`.
+- **"Catalog" dropdown:** `movies` or `tv` — which catalog to search.
+- **Search field:** EN / RU / UK, any string.
+- **🔍 button / Enter** → `engine.search(query, limit=20)`.
 
-`UniversalSearchEngine.search` уже умеет искать по `title`, `title_ru`, `title_uk` параллельно (`universal_search.py:627-...`). То есть «Володар Перснів», «Властелин колец», «Lord of the Rings» — все найдут один и тот же фильм.
+`UniversalSearchEngine.search` already searches `title`, `title_ru`, `title_uk` in
+parallel (`universal_search.py:627-...`). So "Володар Перснів", "Властелин колец",
+"Lord of the Rings" all find the same film.
 
-Результаты — список строк с эмодзи (🎬 movie / 📺 tv), кнопка ★ добавляет в избранное.
+Results — a list of rows with emoji (🎬 movie / 📺 tv), the ★ button adds to favorites.
 
-### Избранное (seed)
+### Favorites (seed)
 
-Список tmdb_id с title и media_type. Используется как **seed** для всех `/recs_*` кнопок. Дубли отсекаются. Кнопка × убирает.
+A list of tmdb_ids with title and media_type. Used as the **seed** for all `/recs_*`
+buttons. Duplicates are dropped. The × button removes an item.
 
-Хранится только в памяти процесса — при перезапуске GUI обнуляется (намеренно: это admin-инструмент, не сессия пользователя).
+Held in process memory only — reset on GUI restart (intentional: this is an admin
+tool, not a user session).
 
-### 4 кнопки рекомендаций
+### 4 recommendation buttons
 
-| Кнопка | Что делает | Что нужно в избранном |
+| Button | What it does | Needed in favorites |
 |---|---|---|
-| **/recs_movie** | `router.recs_movie(favorites, top_k=8)` | хотя бы 1 фильм |
-| **/recs_tv** | `router.recs_tv(favorites, top_k=8)` | хотя бы 1 сериал |
-| **/recs_all** | `router.recs_all(favorites, top_k=8)` | любое |
-| **/recs_cross** | `router.recs_cross(favorites, target_media_type=...)` | любое + Dropdown «Cross target» (`movie` / `tv`) |
+| **/recs_movie** | `router.recs_movie(favorites, top_k=8)` | at least 1 movie |
+| **/recs_tv** | `router.recs_tv(favorites, top_k=8)` | at least 1 show |
+| **/recs_all** | `router.recs_all(favorites, top_k=8)` | anything |
+| **/recs_cross** | `router.recs_cross(favorites, target_media_type=...)` | anything + the "Cross target" dropdown (`movie` / `tv`) |
 
-Семантика **идентична** командам в Telegram-боте (`movie_bot.py:790-862`). Если результат отличается от бота — значит баг в самом боте, не в GUI.
+The semantics are **identical** to the Telegram bot commands (`movie_bot.py:790-862`).
+If the result differs from the bot, the bug is in the bot, not the GUI.
 
 ### Cross-domain (`/recs_cross`)
 
-Требует FAISS индекс:
+Requires the FAISS index:
 
 - `src/recommendation_system/faiss_index/catalog.faiss`
 - `src/recommendation_system/faiss_index/catalog_meta.json`
 
-Если файлов нет:
+If the files are missing:
 
-- При старте Tab 3 показывается **жёлтый баннер** с инструкцией.
-- Кнопка `/recs_cross` disabled (tooltip объясняет почему).
+- On Tab 3 startup a **yellow banner** with instructions is shown.
+- The `/recs_cross` button is disabled (the tooltip explains why).
 
-Собрать индекс:
+Build the index:
 
 ```powershell
 $env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.compute_embeddings --to-faiss
 ```
 
-После сборки — **перезапусти GUI** (Tab 3 проверяет наличие индекса только при создании).
+After building, **restart the GUI** (Tab 3 only checks for the index at creation time).
 
 ### Lang switcher
 
-Dropdown «Язык названий»: `en` / `ru` / `uk`. Переключает поле, которое отображается в результатах и избранном:
+The "Title language" dropdown: `en` / `ru` / `uk`. Switches the field shown in
+results and favorites:
 
 - `en` → `item.title`
-- `ru` → `item.title_ru` (fallback `title` если пусто)
-- `uk` → `item.title_uk` (fallback `title` если пусто)
+- `ru` → `item.title_ru` (fallback to `title` if empty)
+- `uk` → `item.title_uk` (fallback to `title` if empty)
 
-Поиск работает на **всех языках одновременно** независимо от switcher'а — switcher только про отображение.
+Search works across **all languages simultaneously**, regardless of the switcher —
+the switcher only controls display.
 
-Search-list **не перерисовывается** при смене языка (не храним source items). Чтобы увидеть переключение в поиске — повтори запрос.
+The search list is **not** re-rendered on language change (we don't keep source
+items). To see the switch in search, repeat the query.
 
-### Карточка результата
+### Result card
 
-- Title + год (в выбранном языке).
+- Title + year (in the selected language).
 - Badge: 🎬 Movies / 📺 TV.
-- Жанры (до 5 первых).
+- Genres (first 5).
 - TMDB rating + source (`trained` / `catalog` / `cold_start`).
 
-### Типичные граблиf
+### Common pitfalls
 
-- **«Сначала добавьте элементы в избранное»** → пустое seed.
-- **«Получено 0 рекомендаций»** → tmdb_id из favorites не известны движку соответствующего домена (например `/recs_movie` с TV-сидами).
-- **«Ошибка загрузки движков»** → `checkpoint not found` (`v4.pt` отсутствует) или `dataset not built` (parquet нет). Возвращайся на Tab 1 или Tab 2.
+- **"Add items to favorites first"** → empty seed.
+- **"Got 0 recommendations"** → the favorites' tmdb_ids aren't known to the relevant domain engine (e.g. `/recs_movie` with TV seeds).
+- **"Engine load error"** → `checkpoint not found` (`v4.pt` missing) or `dataset not built` (no parquet). Go back to Tab 1 or Tab 2.
 
 ---
 
-## Tab 4 «Данные»
+## Tab 4 "Data"
 
-Readonly dashboard. Реализация: `gui/data_tab.py:26` (`DataTab`) + `gui/domain_stats.py:138` (`_collect_domain_stats`).
+A readonly dashboard. Implementation: `gui/data_tab.py:26` (`DataTab`) +
+`gui/domain_stats.py:138` (`_collect_domain_stats`).
 
-### Что показывает
+### What it shows
 
-Две карточки бок о бок: 🎬 Movies и 📺 TV. Каждая:
+Two cards side by side: 🎬 Movies and 📺 TV. Each:
 
-**Блок «Датасет»:**
-- Users / Items / Interactions (из `id_mapping.json` + parquet metadata).
-- `interactions mtime` / `items mtime` (когда parquet был перезаписан).
+**"Dataset" block:**
+- Users / Items / Interactions (from `id_mapping.json` + parquet metadata).
+- `interactions mtime` / `items mtime` (when the parquet was last rewritten).
 
-**Блок «Последняя тренировка»** (читает свежайший sidecar JSON из `models/{domain}/`):
+**"Last training" block** (reads the freshest sidecar JSON from `models/{domain}/`):
 - `trained at` (ISO timestamp).
-- `checkpoint` (имя `.pt`).
+- `checkpoint` (the `.pt` name).
 - `recall@10`.
 - Chip: **sanity OK** / **sanity FAIL**.
 
-Если sidecar нет (модель тренировалась на Colab без `local-training` инфры) — «Sidecar не найден — модель не обучалась локально». Это нормально для исторических v1-v4.
+If there's no sidecar (the model predates the `local-training` infra) — "Sidecar
+not found — model wasn't trained locally". This is normal for historical v1–v4.
 
-**Кнопки:**
-- «Папка датасета» / «Папка моделей» → открывает в Explorer.
+**Buttons:**
+- "Dataset folder" / "Models folder" → open in Explorer.
 
-**Refresh (↻ вверху):** обновляет всё. Tab 2 после успешной сборки вызывает refresh автоматически — кнопка нужна только если меняешь что-то снаружи.
+**Refresh (↻ at the top):** refreshes everything. Tab 2 calls refresh automatically
+after a successful build — the button is only needed if you change something externally.
 
-### Если датасет не собран
+### If the dataset isn't built
 
-Карточка показывает «⚠ Датасет не создан» + ожидаемый путь + подсказку «Создайте на вкладке «Создание датасета»». Сборка через Tab 2.
-
----
-
-## Типичные сценарии end-to-end
-
-### Сценарий 1: «Натренировал новую модель — хочу проверить»
-
-1. **Tab 1**: domain=movies, epochs=30, device=GPU → Старт.
-2. Дождись зелёного баннера → запомни путь к `.pt` (или открой sidecar).
-3. **Закрой GUI и открой заново** (Tab 3 загружает чекпоинт только при первом запуске).
-4. **Tab 4**: проверь карточку Movies → «Последняя тренировка» = свежая, chip = sanity OK.
-5. **Tab 3**: добавь 3-5 знакомых фильмов в избранное → /recs_movie → сравни глазами с тем, что раньше выдавала старая модель.
-6. Если ок — выкатывай в бот (отдельный шаг, не из GUI).
-
-### Сценарий 2: «Свежий Trakt-collect — пересобираю TV-датасет»
-
-1. **Tab 2**: domain=tv, Amazon dir = default → Собрать.
-2. Жди (TV ~10-20 минут). Зелёный баннер «Sanity OK».
-3. **Tab 4**: Movies-карточка не изменилась; TV-карточка показывает свежие числа.
-4. **Tab 1**: domain=tv, device=GPU → Старт (новый чекпоинт TV нужен потому что catalog поменялся).
-5. (Опционально) **Tab 2**: domain=movies → Собрать заново, потом Tab 1 movies. Делать **только** если структура изменилась.
-6. Перезапусти GUI и проверь через Tab 3 (см. Сценарий 1).
-
-### Сценарий 3: «Сравнить две версии модели»
-
-GUI этого не делает прямо. Workflow:
-
-1. Сделай первый train (v5) на Tab 1.
-2. Скопируй sidecar v5 → блокнот: запомни `recall@10`.
-3. Поменяй гиперы → второй train (v6).
-4. Открой sidecar v6 → сравни глазами.
-5. **Tab 3** покажет рекомендации только от **последней** модели (latest sidecar). Чтобы протестировать v5 — временно удали sidecar v6.
-
-Полноценное сравнение → `spec/retrain-pipeline.md` или custom скрипт.
-
-### Сценарий 4: «GUI открылся, но Tab 3 не загружает движки»
-
-Симптом: красное «Ошибка загрузки движков», в логе traceback.
-
-- **`FileNotFoundError: checkpoint not found`** → нет `lightgcn_{domain}_best_v4.pt` ИЛИ latest sidecar указывает на отсутствующий файл. Удали битый sidecar / положи v4.pt.
-- **`FileNotFoundError: dataset not built`** → пусто в `data/processed/{domain}/`. Tab 2 → Собрать.
-- **`RuntimeError: InferenceEngine.movies: <error>`** → checkpoint несовместим с текущим `lightgcn.py` (поменялась архитектура модели). Сравни state_dict keys; пересобери модель свежим train.
-- **`FaissCatalog not found`** → запусти `compute_embeddings --to-faiss`, перезапусти GUI.
+The card shows "⚠ Dataset not built" + the expected path + a "Build it on the
+'Dataset build' tab" hint. Build via Tab 2.
 
 ---
 
-## Ограничения и риски
+## End-to-end scenarios
 
-1. **Hot-swap моделей не поддерживается.** Чтобы InferenceTab подхватил свежий чекпоинт — закрой и открой GUI.
-2. **Device фиксируется при первом lazy-load в Tab 3.** Сменишь header device после — реально движок останется на старом.
-3. **Сборка датасета не прерывается** (Tab 2). Запустил по ошибке → ждёшь или убиваешь процесс.
-4. **Concurrency:** не запускай Tab 1 (train) и Tab 2 (build) одновременно — оба тяжёлые. Tab 3 (inference) на момент train конфликтует за GPU, на момент build — за диск.
-5. **Логи только в окне GUI** (Tab 1, Tab 2). При крэше окна — теряются. Для архивации используй sidecar (Tab 1) или `make_dataset.log` (Tab 2).
+### Scenario 1: "Trained a new model — want to check it"
+
+1. **Tab 1**: domain=movies, epochs=30, device=GPU → Start.
+2. Wait for the green banner → note the `.pt` path (or open the sidecar).
+3. **Close the GUI and reopen it** (Tab 3 loads the checkpoint only on first launch).
+4. **Tab 4**: check the Movies card → "Last training" = fresh, chip = sanity OK.
+5. **Tab 3**: add 3–5 familiar movies to favorites → /recs_movie → eyeball them vs what the old model used to return.
+6. If OK — roll it out to the bot (a separate step, not from the GUI).
+
+### Scenario 2: "Fresh Trakt collect — rebuilding the TV dataset"
+
+1. **Tab 2**: domain=tv, Amazon dir = default → Build.
+2. Wait (TV ~10–20 min). Green "Sanity OK" banner.
+3. **Tab 4**: the Movies card is unchanged; the TV card shows fresh numbers.
+4. **Tab 1**: domain=tv, device=GPU → Start (a new TV checkpoint is needed because the catalog changed).
+5. (Optional) **Tab 2**: domain=movies → rebuild, then Tab 1 movies. Do this **only** if the structure changed.
+6. Restart the GUI and verify via Tab 3 (see Scenario 1).
+
+### Scenario 3: "Compare two model versions"
+
+The GUI doesn't do this directly. Workflow:
+
+1. Do the first train (v5) on Tab 1.
+2. Copy the v5 sidecar → notepad: note `recall@10`.
+3. Change hyperparameters → second train (v6).
+4. Open the v6 sidecar → compare by eye.
+5. **Tab 3** shows recommendations only from the **latest** model (latest sidecar). To test v5, temporarily delete the v6 sidecar.
+
+A full comparison → `spec/retrain-pipeline.md` or a custom script.
+
+### Scenario 4: "GUI opened, but Tab 3 won't load engines"
+
+Symptom: a red "Engine load error", a traceback in the log.
+
+- **`FileNotFoundError: checkpoint not found`** → no `lightgcn_{domain}_best_v4.pt` OR the latest sidecar points to a missing file. Delete the broken sidecar / put `v4.pt` in place.
+- **`FileNotFoundError: dataset not built`** → `data/processed/{domain}/` is empty. Tab 2 → Build.
+- **`RuntimeError: InferenceEngine.movies: <error>`** → checkpoint incompatible with the current `lightgcn.py` (model architecture changed). Compare state_dict keys; rebuild the model with a fresh train.
+- **`FaissCatalog not found`** → run `compute_embeddings --to-faiss`, restart the GUI.
 
 ---
 
-## Ссылки на код
+## Limitations and risks
 
-| Что | Файл / строки |
+1. **Model hot-swap is not supported.** For InferenceTab to pick up a fresh checkpoint — close and reopen the GUI.
+2. **Device is fixed at the first lazy-load in Tab 3.** Change the header device afterwards and the engine actually stays on the old one.
+3. **Dataset build cannot be interrupted** (Tab 2). Start it by mistake → wait or kill the process.
+4. **Concurrency:** don't run Tab 1 (train) and Tab 2 (build) at once — both are heavy. Tab 3 (inference) contends with train for GPU, with build for disk.
+5. **Logs live only in the GUI window** (Tab 1, Tab 2). On a window crash they're lost. For archival use the sidecar (Tab 1) or `make_dataset.log` (Tab 2).
+
+---
+
+## Code references
+
+| What | File / lines |
 |---|---|
-| Точка входа GUI | `gui/app.py:144 main()` (+ шим `trainer_gui.py`) |
-| Дизайн-токены / фабрики кнопок | `gui/theme.py` (`COLORS`, `BUTTON_HEIGHT`, `CONTENT_MAX_WIDTH`, `primary/danger/accent/neutral/secondary_button`) |
-| Tab 1 «Обучение» | `gui/training_tab.py:59 TrainingTab` |
-| Tab 2 «Создание датасета» | `gui/dataset_tab.py:170 DatasetTab` |
-| Tab 3 «Тестирование» | `gui/inference_tab.py:57 InferenceTab` |
-| Tab 4 «Данные» | `gui/data_tab.py:26 DataTab` |
-| Sanity-check датасета | `gui/dataset_tab.py:34 _dataset_sanity()` |
-| Stat collector для Tab 4 | `gui/domain_stats.py:138 _collect_domain_stats()` |
-| Логи → UI bridge | `gui/common.py:33 _QueueLogHandler` |
+| GUI entry point | `gui/app.py:144 main()` (+ shim `trainer_gui.py`) |
+| Design tokens / button factories | `gui/theme.py` (`COLORS`, `BUTTON_HEIGHT`, `CONTENT_MAX_WIDTH`, `primary/danger/accent/neutral/secondary_button`) |
+| Tab 1 "Training" | `gui/training_tab.py:59 TrainingTab` |
+| Tab 2 "Dataset build" | `gui/dataset_tab.py:170 DatasetTab` |
+| Tab 3 "Testing" | `gui/inference_tab.py:57 InferenceTab` |
+| Tab 4 "Data" | `gui/data_tab.py:26 DataTab` |
+| Dataset sanity check | `gui/dataset_tab.py:34 _dataset_sanity()` |
+| Stat collector for Tab 4 | `gui/domain_stats.py:138 _collect_domain_stats()` |
+| Logs → UI bridge | `gui/common.py:33 _QueueLogHandler` |
 | Backend CLI | `trainer.py:445-635 main()` |
 | Backend dataset | `make_dataset.py:127 MovieDatasetProcessor` |
 | Inference loader | `inference_engine.py:31 InferenceEngine` |
 | Router | `dual_domain_engine.py:32 DualDomainEngine` |
 
-## См. также
+## See also
 
-- `spec/two-model-architecture.md` — почему movies и tv разделены.
-- `spec/retrain-pipeline.md` (будущее) — что будет вместо ручного train в Tab 1.
-- `movie_bot.py` — production-вариант того же `DualDomainEngine`.
+- `spec/two-model-architecture.md` — why movies and tv are separated.
+- `spec/retrain-pipeline.md` (future) — what will replace the manual train in Tab 1.
+- `movie_bot.py` — the production variant of the same `DualDomainEngine`.

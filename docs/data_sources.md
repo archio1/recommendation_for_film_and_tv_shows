@@ -1,20 +1,43 @@
 # Data Sources — Setup & Schema Reference
 
-Все датасеты хранятся в `data/raw/`. Это руководство объясняет, какие источники нужны для какой модели, где их взять, и какой формат CSV ожидает пайплайн `make_dataset.py`.
+All datasets live under `data/raw/`. This guide explains which sources each
+model needs, where to get them, and the CSV format the `make_dataset.py`
+pipeline expects.
 
-При сборке через GUI (`python -m recommendation_system.models.gnn.trainer_gui` → вкладка «Создание датасета») отсутствие обязательного источника блокируется pre-flight проверкой со ссылкой на этот документ.
+When building through the GUI (`python -m recommendation_system.models.gnn.trainer_gui`
+→ "Dataset" tab), a missing **required** source is blocked by a pre-flight check
+that links back to this document.
+
+> **Note on the TV dataset:** the Trakt.tv signal used by the TV model was
+> **collected from scratch for this project** — see
+> [Trakt CSV](#trakt-csv--required). It is not an off-the-shelf download.
 
 ---
 
-## TL;DR — что нужно
+## TL;DR — what you need
 
-| Источник | Модель | Обязательность | Размер | Где взять |
+| Source | Model | Required? | Size | Where to get it |
 |---|---|---|---|---|
 | MovieLens 32M | movies | **Required** | ~1.1 GB | [grouplens.org/datasets/movielens/32m](https://grouplens.org/datasets/movielens/32m/) |
-| TMDB metadata v11 | movies | Optional | ~400 MB | Kaggle: «TMDB Movies Dataset 2024» |
-| Trakt shows CSV | tv | **Required** | ~5 MB | `trakt_collector.py` (~2 суток) или сторонний CSV |
-| Trakt interactions CSV | tv | **Required** | ~80 MB | то же |
+| TMDB metadata v11 | movies | Optional | ~400 MB | Kaggle: "TMDB Movies Dataset 2024" |
+| Trakt shows CSV | tv | **Required** | ~5 MB | `trakt_collector.py` (self-collected, ~2 days) or a third-party CSV |
+| Trakt interactions CSV | tv | **Required** | ~80 MB | same |
 | Amazon Reviews 2023 | movies/tv | Optional | ~100 GB | [amazon-reviews-2023.github.io](https://amazon-reviews-2023.github.io/) |
+
+### Can I use my own / other datasets?
+
+- **Movies — no (must be MovieLens 32M).** The movie pipeline depends structurally
+  on MovieLens `links.csv` for the MovieID → TMDB ID mapping; it can't be swapped
+  without rewriting `load_data()` / `link_to_movielens()`.
+- **TV — yes, any CSV that matches the schema contract.** You don't have to run the
+  Trakt crawler — a Kaggle dump, an IMDb export, or any other TV ratings source
+  works as long as `trakt_shows.csv` and `trakt_interactions.csv` follow the columns
+  and types in [the contract below](#b-plug-in-an-existing-csv--schema-contract).
+- **TMDB metadata / Amazon Reviews — optional enrichment.** Drop them in to improve
+  metadata/coverage, or leave them out; the pipeline degrades gracefully.
+
+All inputs are **CSV** (or JSONL for Amazon). The exact columns, types, and
+required/optional status per source are specified in the sections below.
 
 ---
 
@@ -22,36 +45,40 @@
 
 ### MovieLens 32M — **Required**
 
-GroupLens MovieLens 32M даёт основную user-item матрицу для модели фильмов. Без него пайплайн `build_movie_dataset()` упадёт на чтении `ratings.csv` (см. `make_dataset.py:312-327` — read без `exists()` проверки).
+GroupLens MovieLens 32M provides the core user–item matrix for the movie model.
+Without it, `build_movie_dataset()` fails while reading `ratings.csv`
+(see `make_dataset.py:312-327` — read with no `exists()` guard).
 
-**Как установить:**
+**How to install:**
 
-1. Скачать `ml-32m.zip` (~250 MB) с https://grouplens.org/datasets/movielens/32m/.
-2. Распаковать в `data/raw/ml-32m/`. Ожидаемая структура:
+1. Download `ml-32m.zip` (~250 MB) from https://grouplens.org/datasets/movielens/32m/.
+2. Unpack into `data/raw/ml-32m/`. Expected layout:
    ```
    data/raw/ml-32m/
-     ├── ratings.csv     (~870 MB, ~32M строк)
-     ├── movies.csv      (~3 MB, ~87K фильмов)
+     ├── ratings.csv     (~870 MB, ~32M rows)
+     ├── movies.csv      (~3 MB, ~87K movies)
      ├── links.csv       (~1.6 MB, movieId ↔ tmdbId)
-     ├── tags.csv        (используется опционально)
+     ├── tags.csv        (optional, used if present)
      ├── README.txt
      └── checksums.txt
    ```
-3. Проверить (в GUI → DatasetTab → Источники → MovieLens dir): должна быть ✓ зелёная.
+3. Verify (GUI → Dataset tab → Sources → MovieLens dir): the indicator must be a green ✓.
 
-**Схема (всё это GroupLens задаёт сам — менять не нужно):**
+**Schema (defined by GroupLens — do not change):**
 
 - `ratings.csv`: `userId`, `movieId`, `rating` (0.5–5.0), `timestamp` (epoch).
 - `movies.csv`: `movieId`, `title`, `genres` (pipe-separated).
-- `links.csv`: `movieId`, `imdbId`, `tmdbId` (может быть NaN).
+- `links.csv`: `movieId`, `imdbId`, `tmdbId` (may be NaN).
 
 ### TMDB metadata v11 — Optional
 
-Расширяет метаданные фильмов (overview, keywords, popularity, vote_count) и улучшает классификацию жанров. Без него movies-пайплайн работает, но без обогащённых метаданных.
+Enriches movie metadata (overview, keywords, popularity, vote_count) and improves
+genre classification. The movie pipeline works without it, just with leaner metadata.
 
-**Как установить:** скачать с Kaggle (поиск «TMDB Movies Dataset» v11) → `data/raw/TMDB_movie_dataset_v11.csv`.
+**How to install:** download from Kaggle (search "TMDB Movies Dataset" v11) →
+`data/raw/TMDB_movie_dataset_v11.csv`.
 
-Reference: `make_dataset.py:clean_tmdb_movies` (строки 586+).
+Reference: `make_dataset.py:clean_tmdb_movies` (line 586+).
 
 ---
 
@@ -59,46 +86,58 @@ Reference: `make_dataset.py:clean_tmdb_movies` (строки 586+).
 
 ### Trakt CSV — **Required**
 
-Trakt — основная user-item матрица для TV-модели. Есть два способа получить:
+Trakt is the core user–item matrix for the TV model. **This dataset was
+self-collected for the project** — Movie collaborative signal is abundant
+(MovieLens), but a comparably large *TV* signal is not publicly available, so it
+was crawled directly from the Trakt.tv API. The full collection yielded
+**~5,020 shows × ~83K users × ~1.95M ratings** and fixed the historical
+movie/TV imbalance (previously ~99% / ~1%).
 
-#### (a) Самосбор через `trakt_collector.py` (≈2 суток)
+Two ways to obtain the CSVs:
+
+#### (a) Self-collect via `trakt_collector.py` (≈2 days)
 
 ```bash
 python -m recommendation_system.data.trakt_collector
 ```
 
-Скрипт идёт через Trakt API с rate-limit'ами; собирает популярные шоу + ratings ~80K пользователей. Промежуточное состояние сохраняется в `data/raw/trakt_collector.db`, можно прерывать и возобновлять.
+The script walks the Trakt API under rate limits; it discovers popular shows and
+collects ratings from ~80K users. Progress is checkpointed in
+`data/raw/trakt_collector.db`, so the crawl can be interrupted and resumed.
 
-Результат — два файла в `data/raw/`:
+Output — two files in `data/raw/`:
 - `trakt_shows.csv`
 - `trakt_interactions.csv`
 
-Это рекомендованный способ для воспроизводимости.
+This is the recommended path for reproducibility.
 
-#### (b) Подключение готового CSV — schema-контракт
+#### (b) Plug in an existing CSV — schema contract
 
-Если у вас есть готовый TV-датасет (Kaggle, IMDb dump, чужой Trakt-snapshot), подключите его через GUI → DatasetTab → ExpansionTile «Источники» → FilePicker на полях `Trakt shows CSV` и `Trakt interactions CSV`.
+If you already have a TV dataset (Kaggle, an IMDb dump, someone else's Trakt
+snapshot), attach it via GUI → Dataset tab → "Sources" expander → file picker on
+the `Trakt shows CSV` and `Trakt interactions CSV` fields.
 
-CSV должен соответствовать следующему контракту, иначе пайплайн упадёт или вернёт пустой DataFrame.
+The CSV must match the contract below, or the pipeline fails / returns an empty
+DataFrame.
 
 ##### `trakt_shows.csv`
 
-Reference: `make_dataset.py:load_trakt_metadata` (строки 492–551).
+Reference: `make_dataset.py:load_trakt_metadata` (lines 492–551).
 
-| Колонка | Тип | Обязательность | Замечания |
+| Column | Type | Required? | Notes |
 |---|---|---|---|
-| `tmdb_id` | int | **Required** | TMDB show ID, **без** offset (+10M добавляется автоматически) |
-| `title` | str | **Required** | оригинальное название |
-| `year` | int | **Required** | год премьеры; NaN → строка отбрасывается |
-| `genres` | str | **Required** | список жанров: comma-separated (`"Drama, Sci-Fi"`) или JSON-list (`'["Drama"]'`); пустые отбрасываются |
-| `overview` | str | **Required** | описание; короче 10 символов → строка отбрасывается |
-| `language` | str (ISO 639-1) | используется если есть | фильтр `languages` из GUI применяется только если колонка существует |
-| `vote_average` | float | Optional (default 0.0) | TMDB-style рейтинг 0–10 |
-| `vote_count` | int | Optional (default 0) | используется в фильтре «non-target language ≥ 100 votes» |
-| `popularity` | float | Optional (default 0.0) | используется для top-N сортировки |
-| `title_ru` | str | Optional (default NULL) | RU-перевод названия для bilingual UI |
+| `tmdb_id` | int | **Required** | TMDB show ID, **without** offset (+10M is added automatically) |
+| `title` | str | **Required** | original title |
+| `year` | int | **Required** | premiere year; NaN → row dropped |
+| `genres` | str | **Required** | genre list: comma-separated (`"Drama, Sci-Fi"`) or JSON list (`'["Drama"]'`); empty → dropped |
+| `overview` | str | **Required** | description; shorter than 10 chars → row dropped |
+| `language` | str (ISO 639-1) | used if present | the GUI `languages` filter applies only if this column exists |
+| `vote_average` | float | Optional (default 0.0) | TMDB-style 0–10 rating |
+| `vote_count` | int | Optional (default 0) | used by the "non-target language ≥ 100 votes" filter |
+| `popularity` | float | Optional (default 0.0) | used for top-N sorting |
+| `title_ru` | str | Optional (default NULL) | RU title translation for the bilingual UI |
 
-Минимальный валидный пример:
+Minimal valid example:
 ```csv
 tmdb_id,title,year,genres,overview,language,vote_average,vote_count,popularity
 1399,Game of Thrones,2011,"Drama, Fantasy","Seven noble families fight for control of the mythical land of Westeros.",en,8.4,21000,500.0
@@ -107,16 +146,16 @@ tmdb_id,title,year,genres,overview,language,vote_average,vote_count,popularity
 
 ##### `trakt_interactions.csv`
 
-Reference: `make_dataset.py:load_trakt_interactions` (строки 553–580).
+Reference: `make_dataset.py:load_trakt_interactions` (lines 553–580).
 
-| Колонка | Тип | Обязательность | Замечания |
+| Column | Type | Required? | Notes |
 |---|---|---|---|
-| `user_id` | uint32 | **Required** | произвольные неотрицательные целые; уникальность не требуется (за rating'ом) |
-| `tmdb_id` | uint32 | **Required** | **БЕЗ** +10M offset — добавится в pipeline (строка 573) |
-| `rating` | float32 | **Required** | шкала 0.5–5.0 (MovieLens-совместимая) |
-| `timestamp` | uint32 | **Required** | unix epoch в секундах |
+| `user_id` | uint32 | **Required** | arbitrary non-negative ints; uniqueness not required (one row per rating) |
+| `tmdb_id` | uint32 | **Required** | **without** +10M offset — added in the pipeline (line 573) |
+| `rating` | float32 | **Required** | 0.5–5.0 scale (MovieLens-compatible) |
+| `timestamp` | uint32 | **Required** | unix epoch in seconds |
 
-Минимальный валидный пример:
+Minimal valid example:
 ```csv
 user_id,tmdb_id,rating,timestamp
 1,1399,5.0,1604188800
@@ -124,64 +163,76 @@ user_id,tmdb_id,rating,timestamp
 2,1399,4.0,1604190000
 ```
 
-Строки с `tmdb_id`, отсутствующими в `trakt_shows.csv`, будут отброшены при join (строка 577).
+Rows whose `tmdb_id` is absent from `trakt_shows.csv` are dropped on join (line 577).
 
 ---
 
-## Amazon Reviews 2023 — Optional (кросс-доменный)
+## Amazon Reviews 2023 — Optional (cross-domain)
 
-Очень большой датасет (~100 GB) с user-item-rating взаимодействиями по фильмам и сериалам с Amazon Prime. Если подключён — добавляет десятки миллионов взаимодействий поверх MovieLens / Trakt.
+A very large dataset (~100 GB) of user–item–rating interactions for movies and TV
+from Amazon Prime. When attached, it adds tens of millions of interactions on top
+of MovieLens / Trakt.
 
-**Как использовать:**
-1. Скачать [Movies_and_TV](https://amazon-reviews-2023.github.io/) (метаданные + ревью), распаковать.
-2. Структура папки:
+**How to use:**
+1. Download [Movies_and_TV](https://amazon-reviews-2023.github.io/) (metadata + reviews) and unpack.
+2. Folder layout:
    ```
    <amazon_dir>/
      ├── meta_Movies_and_TV.jsonl     (~3 GB)
      └── Movies_and_TV.jsonl          (~90 GB)
    ```
-3. В GUI → DatasetTab → ExpansionTile «Источники» → поле «Amazon dir» указать путь к папке.
+3. GUI → Dataset tab → "Sources" expander → set the "Amazon dir" field to the folder path.
 
-Если файлы отсутствуют — пайплайн делает graceful fallback (просто пропускает Amazon, `make_dataset.py:357-359`). На иконке источника покажется ⚠ amber (optional missing).
+If the files are absent, the pipeline does a graceful fallback (it simply skips
+Amazon, `make_dataset.py:357-359`). The source icon shows an amber ⚠ (optional missing).
 
-Mapping ASIN → tmdb_id идёт по очищенному title (см. `load_amazon_interactions`, строки 347+).
+ASIN → tmdb_id mapping is done by cleaned title (see `load_amazon_interactions`, line 347+).
 
 ---
 
-## Подмена источников из GUI
+## Overriding sources from the GUI
 
-Любой из источников можно переопределить через GUI без редактирования `make_dataset.py`:
+Any source can be overridden from the GUI without editing `make_dataset.py`:
 
-1. Запустить `python -m recommendation_system.models.gnn.trainer_gui`.
-2. Вкладка «Создание датасета».
-3. Развернуть `ExpansionTile «Источники»`.
-4. Для нужного поля нажать иконку папки/файла → FilePicker.
-5. Иконка справа (`✓` / `✗` / `⚠`) мгновенно подтверждает наличие.
+1. Run `python -m recommendation_system.models.gnn.trainer_gui`.
+2. Go to the "Dataset" tab.
+3. Expand the "Sources" expander.
+4. For the field you want, click the folder/file icon → file picker.
+5. The icon on the right (`✓` / `✗` / `⚠`) confirms presence instantly.
 
-Пустое поле = использовать дефолт из `data/raw/...`. Подменённый путь — сохранится только на текущий запуск сборки (не записывается в файл настроек).
+An empty field = use the default under `data/raw/...`. An overridden path is kept
+only for the current build run (not written to a settings file).
 
 ---
 
 ## Smoke vs Full preset
 
-Полная сборка movies+tv требует много памяти и времени. На локальном железе с ограниченным RAM/VRAM выбирайте подходящий preset в `ExpansionTile «Параметры»`:
+A full movies+tv build is memory- and time-heavy. On local hardware with limited
+RAM/VRAM, pick a preset in the "Parameters" expander:
 
-| Preset | top_n_movies | top_n_tv | min_year | rating_threshold | max_interactions | Время сборки | Куда годится |
+| Preset | top_n_movies | top_n_tv | min_year | rating_threshold | max_interactions | Build time | Good for |
 |---|---|---|---|---|---|---|---|
-| **Smoke** | 500 | 200 | 2010 | 3.5 | (без лимита) | <5 мин | проверка пайплайна, отладка кода |
-| **Default** | 15 000 | 10 000 | (нет) | 3.5 | 15 000 000 | 20–40 мин | боевая сборка (текущие хардкоды) |
-| **Full** | (все) | (все) | (нет) | (все) | (все) | 1–3 ч + ≥16 GB RAM | максимальное покрытие |
-| **Custom** | — | — | — | — | — | — | ручная правка под задачу |
+| **Smoke** | 500 | 200 | 2010 | 3.5 | (no limit) | <5 min | pipeline check, code debugging |
+| **Default** | 15,000 | 10,000 | (none) | 3.5 | 15,000,000 | 20–40 min | production build (current hardcodes) |
+| **Full** | (all) | (all) | (none) | (all) | (all) | 1–3 h + ≥16 GB RAM | maximum coverage |
+| **Custom** | — | — | — | — | — | — | manual tuning |
 
-**Локальное железо** (`RTX 4060 Ti 8GB`): использовать Smoke preset — полный movies-датасет (16M рёбер) на этом GPU HW-bound (~10 ч/эпоха), Smoke даёт ~1 мин/эпоха. Полные тренировки — Colab.
+**Limited hardware** (e.g. a consumer GPU with ~8GB VRAM): use the Smoke preset —
+the full movie dataset (~16M edges) is HW-bound on such a GPU (~10 h/epoch), while
+Smoke gives ~1 min/epoch. Full training runs need a larger GPU / more RAM (e.g. a
+cloud GPU host).
 
-После смены любого из 8 параметров вручную preset автоматически переключается в `Custom`.
+After you change any of the 8 parameters manually, the preset switches to `Custom`.
 
 ---
 
-## Что не делаем (явно)
+## Non-goals (explicitly out of scope)
 
-- Auto-download MovieLens/TMDB — только инструкции и ссылки в этом файле.
-- Замена MovieLens на «свой источник» для movies pipeline — структурно невозможно без переписывания `load_data()` и `link_to_movielens()`. MovieLens нужен и за тем, что `links.csv` даёт MovieID → TMDBID маппинг.
-- Кнопка запуска `trakt_collector.py` из GUI — сбор идёт ~2 суток с rate-limit'ами Trakt API, не вписывается в GUI-сценарий.
-- Валидация schema-контракта при подмене CSV — пользователь сам соблюдает; ошибки увидите в логах сборки (вкладка «Создание датасета», панель «Логи»).
+- **Auto-download** of MovieLens/TMDB — instructions and links only, in this file.
+- **Swapping MovieLens** for a "custom source" in the movie pipeline — structurally
+  impossible without rewriting `load_data()` and `link_to_movielens()`. MovieLens
+  is also required because `links.csv` provides the MovieID → TMDBID mapping.
+- **A "run `trakt_collector.py`" button in the GUI** — the crawl takes ~2 days under
+  Trakt API rate limits, which doesn't fit a GUI interaction.
+- **Schema-contract validation on CSV override** — the user is responsible for
+  conformance; errors surface in the build logs ("Dataset" tab → "Logs" panel).
