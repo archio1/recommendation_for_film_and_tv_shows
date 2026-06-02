@@ -147,3 +147,6 @@ tmp/
 /spec/*
 !/spec/PROJECT_SNAPSHOT.md
 
+# Personal working docs in Russian (kept local, off the portfolio repo)
+/notes/
+
