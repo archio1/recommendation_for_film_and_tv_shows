@@ -734,8 +734,13 @@ class UniversalSearchEngine:
             for item, rel_score in scored_live:
                 if rel_score < 0.3:
                     continue
-                    
-                if item.popularity < 10:
+
+                # Popularity floor filters obscure fuzzy noise out of TMDb-live,
+                # but a strong title match (rel_score >= 0.9 == exact or prefix)
+                # means the user typed essentially this exact title. Cult /
+                # low-popularity titles (e.g. niche fantasy TV like "Shadow and
+                # Bone", "Willow") must not be dropped then.
+                if rel_score < 0.9 and item.popularity < 10:
                     continue
                 
                 if item.media_type == 'tv' and item.tmdb_id < self.TV_OFFSET:

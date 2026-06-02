@@ -7,12 +7,12 @@ this into two flavors:
 
 - **Should-pass**: well-known titles that ARE in the parquet — search
   must rank them at the top.
-- **xfail**: titles known to be missing today (cult fantasy with low
-  TMDb popularity, or not in Trakt). The bug is in
-  `universal_search.py:602` — `popularity < 10` cutoff drops these
-  even when TMDb live search returns them. We document the bug as
-  `@pytest.mark.xfail` so the test goes green automatically once the
-  fix lands.
+- **Low-popularity regression**: cult fantasy TV with low TMDb
+  popularity used to be dropped by the `popularity < 10` floor in the
+  live-TMDb fallback even on an exact title match. The fix bypasses that
+  floor when the title matches strongly (rel_score >= 0.9). Because the
+  engine fixtures run with no live TMDb (tmdb_api_key=None), we exercise
+  this deterministically with an injected fake client.
 
 Tests skip cleanly if the per-domain engine fixtures can't be built.
 """
@@ -100,7 +100,8 @@ def test_search_handles_garbage_query_gracefully(movies_engine_real):
 
 
 # --------------------------------------------------------------------------
-# Known-bug regression — xfail until universal_search.py:602 is fixed
+# Low-popularity regression: a strong title match must survive the TMDb-live
+# popularity floor (universal_search.py popularity<10 gate).
 # --------------------------------------------------------------------------
 
 LOW_POP_FANTASY_TV = [
@@ -109,19 +110,50 @@ LOW_POP_FANTASY_TV = [
 ]
 
 
-@pytest.mark.xfail(
-    reason=(
-        "universal_search.py:602 drops items with popularity<10 from TMDb live "
-        "results. Cult fantasy TV often falls below this threshold. Fix: lower "
-        "the threshold for tv-domain or skip the popularity gate when title "
-        "matches exactly. Remove this xfail once fixed."
-    ),
-    strict=False,
-)
+class _FakeTMDBClient:
+    """Minimal stand-in for TMDBLiveClient: returns one low-popularity,
+    exact-title TV match for any query, mirroring search_multi()."""
+
+    def __init__(self, title, tmdb_id, popularity):
+        self._title = title
+        self._tmdb_id = tmdb_id
+        self._popularity = popularity
+
+    def search_multi(self, query, limit=10):
+        from universal_search import UniversalMediaItem
+
+        return [
+            UniversalMediaItem(
+                tmdb_id=self._tmdb_id,
+                media_type="tv",
+                title=self._title,
+                year=2021,
+                genres=["Fantasy"],
+                popularity=self._popularity,  # below the 10.0 floor
+                vote_average=7.5,
+                vote_count=400,
+                source="tmdb_live",
+            )
+        ]
+
+
 @pytest.mark.parametrize("query", LOW_POP_FANTASY_TV)
-def test_search_finds_low_popularity_tv_shows(tv_engine_real, query):
+def test_search_finds_low_popularity_tv_shows(tv_engine_real, query, monkeypatch):
+    # The show is absent from the local parquet, so search() falls through to
+    # the live path. The real fixture has no TMDb client (tmdb_api_key=None),
+    # so inject a fake one returning the show with popularity < 10. The fixed
+    # popularity gate must let it through because the title matches exactly
+    # (rel_score == 1.0). Without the fix the floor would drop it.
+    fake = _FakeTMDBClient(title=query, tmdb_id=900000 + len(query), popularity=5.0)
+    monkeypatch.setattr(tv_engine_real, "tmdb_client", fake)
+    # Don't pollute the session-scoped engine's hot cache with the fake item.
+    monkeypatch.setattr(
+        tv_engine_real.hot_cache, "upsert_batch", lambda *a, **k: None
+    )
+
     res = tv_engine_real.search(query, media_type="tv", limit=10)
     titles_lower = [item.title.lower() for item in res.results]
-    assert any(query.lower() in t or t in query.lower() for t in titles_lower), (
-        f"{query!r} not found; got {titles_lower}"
+    assert query.lower() in titles_lower, (
+        f"{query!r} dropped by popularity floor despite exact title match; "
+        f"got {titles_lower}"
     )
