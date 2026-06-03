@@ -56,7 +56,8 @@ See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the full design and data flow.
   normalization (e.g. `Se7en` ↔ `seven`, Cyrillic queries), independent of the graph.
 - **Popularity de-bias** — a tunable penalty keeps the movie list from
   collapsing into the global IMDb top-250 (reflects "popular among users like
-  you", not "popular overall").
+  you", not "popular overall"). Toggleable per user: `/debias` in the bot, a
+  switch in the admin GUI.
 - **Trilingual** — RU / UK / EN interface and per-user language preference.
 - **Two ways to drive it** — an Aiogram Telegram bot for end users, and a Flet
   desktop admin GUI for dataset building, local training, and offline testing.
@@ -125,8 +126,12 @@ python src/recommendation_system/models/gnn/movie_bot.py
 $env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.trainer_gui
 ```
 
-The admin GUI is documented in **[docs/trainer_gui_guide.md](docs/trainer_gui_guide.md)**;
-the data pipeline in **[docs/data_sources.md](docs/data_sources.md)**.
+Starting from a clean checkout (no models or processed data yet)? Follow
+**[docs/setup_from_scratch.md](docs/setup_from_scratch.md)** — the ordered pipeline
+that builds every artifact (datasets → models → FAISS catalog → caches) before you
+run the bot. The admin GUI is documented in
+**[docs/trainer_gui_guide.md](docs/trainer_gui_guide.md)**; the data pipeline in
+**[docs/data_sources.md](docs/data_sources.md)**.
 
 ---
 
