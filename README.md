@@ -126,6 +126,12 @@ python src/recommendation_system/models/gnn/movie_bot.py
 $env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.trainer_gui
 ```
 
+> **GPU note:** dependencies (incl. `torch` + PyTorch Geometric) are declared in
+> `pyproject.toml`; `uv sync` / `pip install -e .` installs the **CPU** torch build,
+> which is enough to serve the bot and GUI. For GPU **training**, install the CUDA
+> build matching your toolkit instead, e.g.
+> `uv pip install torch==2.6.0+cu124 --index https://download.pytorch.org/whl/cu124`.
+
 Starting from a clean checkout (no models or processed data yet)? Follow
 **[docs/setup_from_scratch.md](docs/setup_from_scratch.md)** — the ordered pipeline
 that builds every artifact (datasets → models → FAISS catalog → caches) before you
