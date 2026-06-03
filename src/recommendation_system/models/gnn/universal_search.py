@@ -762,7 +762,11 @@ class UniversalSearchEngine:
 
         return SearchResult(query=query, results=items[:limit])
 
-    def get_recommendations(self, liked_item_ids=None, liked_tmdb_ids=None, top_k=10, media_type=None):
+    def get_recommendations(self, liked_item_ids=None, liked_tmdb_ids=None, top_k=10, media_type=None,
+                            popularity_debias=None):
+        # popularity_debias: per-call override of self.popularity_debias. None =
+        # use the engine default (current behaviour). Lets multi-user callers
+        # (the bot) pass a per-request value without mutating shared state.
         liked_all = []
         seen_initial = set()
 
@@ -819,7 +823,10 @@ class UniversalSearchEngine:
                     # Берем чуть больше, чтобы потом отфильтровать дубликаты
                     gcn_recs = self.inference_engine.get_recommendations(
                         liked_trained, top_k=quota * 2,
-                        popularity_debias=self.popularity_debias,
+                        popularity_debias=(
+                            self.popularity_debias
+                            if popularity_debias is None else popularity_debias
+                        ),
                     )
                     for r in gcn_recs:
                         res_row = self.metadata[self.metadata['item_id'] == r['item_id']]

@@ -54,6 +54,16 @@ class SessionStore:
             )
             """
         )
+        # Per-user popularity de-bias preference for movie recs (1 = on, the
+        # production default; 0 = raw LightGCN). Added after user_prefs shipped,
+        # so migrate existing DBs with ALTER TABLE — harmless if it already runs
+        # on a fresh table (the CREATE above lacks the column).
+        try:
+            self.conn.execute(
+                "ALTER TABLE user_prefs ADD COLUMN debias INTEGER NOT NULL DEFAULT 1"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
         self.conn.commit()
 
     def add(self, user_id: int, tmdb_id: int) -> None:
@@ -109,6 +119,32 @@ class SessionStore:
                 updated_at = CURRENT_TIMESTAMP
             """,
             (user_id, lang),
+        )
+        self.conn.commit()
+
+    def get_debias(self, user_id: int) -> bool:
+        """Whether movie-rec popularity de-bias is on for this user.
+
+        Defaults to True (the production default) for users with no row yet —
+        matches the bot's historical always-on behaviour.
+        """
+        row = self.conn.execute(
+            "SELECT debias FROM user_prefs WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return bool(row[0]) if row else True
+
+    def set_debias(self, user_id: int, on: bool) -> None:
+        # lang takes its column default ('en') when this inserts a brand-new
+        # row; the first message's autodetect/set_lang overwrites it.
+        self.conn.execute(
+            """
+            INSERT INTO user_prefs (user_id, debias, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                debias = excluded.debias,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, 1 if on else 0),
         )
         self.conn.commit()
 

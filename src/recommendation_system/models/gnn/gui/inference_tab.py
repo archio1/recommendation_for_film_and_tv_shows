@@ -216,6 +216,19 @@ class InferenceTab:
             ),
         )
 
+        # Паритет с ботом: movies-движок понижает вес глобально-популярных тайтлов
+        # (popularity_debias=0.5). Дефолт ВКЛ → GUI совпадает с ботом/тестами;
+        # ВЫКЛ показывает сырую LightGCN-выдачу. См. _run_recs / movie_bot.py.
+        self.debias_switch = ft.Switch(
+            value=True,
+            label="Popularity de-bias",
+            tooltip=(
+                "ВКЛ: как в боте (λ=0.5) — меньше глобального топа, больше "
+                "жанрового разнообразия.\nВЫКЛ: сырая LightGCN-модель. На сериалы "
+                "не влияет."
+            ),
+        )
+
         self.status_text = ft.Text("Готов к работе", size=13, color=COLORS["muted"])
         self.router_status = ft.Text(
             "⏳ Движки не загружены (загрузятся по первому /recs_*)",
@@ -248,6 +261,7 @@ class InferenceTab:
                 self.recs_cross_btn,
                 self.cross_target_dd,
                 self.lang_dd,
+                self.debias_switch,
             ],
             spacing=8,
             wrap=True,
@@ -670,6 +684,12 @@ class InferenceTab:
     def _run_recs(self, scope: str) -> None:
         try:
             tmdb_ids = [t for t, _, _ in self.favorites]
+            # Применяем de-bias из тумблера на лету (атрибут читается в момент
+            # выдачи в universal_search.get_recommendations). TV всегда 0.0.
+            if self.movies_engine is not None:
+                self.movies_engine.popularity_debias = (
+                    0.5 if self.debias_switch.value else 0.0
+                )
             if scope == "movie":
                 recs = self.router.recs_movie(tmdb_ids, top_k=8)
             elif scope == "tv":

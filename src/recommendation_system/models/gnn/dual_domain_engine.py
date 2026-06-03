@@ -87,10 +87,15 @@ class DualDomainEngine:
         self,
         liked_tmdb_ids: Iterable[int] | None = None,
         top_k: int = 10,
+        popularity_debias: float | None = None,
     ) -> list["UniversalMediaItem"]:
         """
         LightGCN-movies recommendations. TV tmdb_ids are silently ignored —
         for cross-domain output use recs_cross or recs_all.
+
+        popularity_debias overrides the engine default per call (None = use the
+        engine's own setting). The bot passes a per-user value here; mutating the
+        shared engine attribute would race across concurrent users.
         """
         movie_ids, _ = self._split_by_domain(liked_tmdb_ids)
         if not movie_ids:
@@ -103,6 +108,7 @@ class DualDomainEngine:
             liked_tmdb_ids=unknown_tids or None,
             top_k=top_k,
             media_type="movie",
+            popularity_debias=popularity_debias,
         )
 
     def recs_tv(
@@ -180,6 +186,7 @@ class DualDomainEngine:
         self,
         liked_tmdb_ids: Iterable[int] | None = None,
         top_k: int = 10,
+        popularity_debias: float | None = None,
     ) -> list["UniversalMediaItem"]:
         """
         Combined feed from both LightGCN models. Each domain is queried
@@ -204,7 +211,10 @@ class DualDomainEngine:
         # overlap with likes already handled inside each engine) and leaves
         # RRF enough material to reorder.
         movie_recs = (
-            self.recs_movie(liked_tmdb_ids=movie_likes, top_k=q_movie * 2)
+            self.recs_movie(
+                liked_tmdb_ids=movie_likes, top_k=q_movie * 2,
+                popularity_debias=popularity_debias,
+            )
             if q_movie else []
         )
         tv_recs = (

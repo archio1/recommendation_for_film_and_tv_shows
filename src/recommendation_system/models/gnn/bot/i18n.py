@@ -60,6 +60,7 @@ I18N: Dict[str, Dict[str, str]] = {
             "/trending — what's hot now\n"
             "/clear — clear list\n"
             "/lang — change language\n"
+            "/debias — popularity de-bias for movie recs\n"
         ),
         "ru": (
             "Привет! Напиши название фильма или сериала — подберу похожее.\n\n"
@@ -70,6 +71,7 @@ I18N: Dict[str, Dict[str, str]] = {
             "/trending — что сейчас смотрят\n"
             "/clear — очистить список\n"
             "/lang — сменить язык\n"
+            "/debias — де-биас популярности для фильмов\n"
         ),
         "uk": (
             "Привіт! Напиши назву фільму чи серіалу — підберу схоже.\n\n"
@@ -80,6 +82,7 @@ I18N: Dict[str, Dict[str, str]] = {
             "/trending — що зараз дивляться\n"
             "/clear — очистити список\n"
             "/lang — змінити мову\n"
+            "/debias — де-біас популярності для фільмів\n"
         ),
     },
 
@@ -124,6 +127,17 @@ I18N: Dict[str, Dict[str, str]] = {
     "lang_confirm_ru": {"en": "Language switched to Russian.", "ru": "Язык переключён на русский.", "uk": "Мову перемкнуто на російську."},
     "lang_confirm_uk": {"en": "Language switched to Ukrainian.", "ru": "Язык переключён на украинский.", "uk": "Мову перемкнуто на українську."},
 
+    # ---------------- /debias command (movie-rec popularity de-bias) ----------------
+    "debias_prompt": {
+        "en": "Popularity de-bias shapes movie recs: on = fewer global blockbusters, more titles matching your taste; off = the raw model. Pick a mode:",
+        "ru": "Де-биас популярности влияет на рекомендации фильмов: вкл — меньше глобальных блокбастеров, больше под твой вкус; выкл — сырая модель. Выбери режим:",
+        "uk": "Де-біас популярності впливає на рекомендації фільмів: увімк — менше глобальних блокбастерів, більше під твій смак; вимк — сира модель. Обери режим:",
+    },
+    "debias_on":  {"en": "✅ On — more variety", "ru": "✅ Вкл — больше разнообразия", "uk": "✅ Увімк — більше різноманіття"},
+    "debias_off": {"en": "Off — raw popular",    "ru": "Выкл — сырой топ",           "uk": "Вимк — сирий топ"},
+    "debias_confirm_on":  {"en": "Popularity de-bias is on — movie recs lean to genre variety over global blockbusters.", "ru": "Де-биас популярности включён — рекомендации фильмов уходят от глобальных блокбастеров к жанровому разнообразию.", "uk": "Де-біас популярності увімкнено — рекомендації фільмів відходять від глобальних блокбастерів до жанрового різноманіття."},
+    "debias_confirm_off": {"en": "Popularity de-bias is off — movie recs follow the raw model (more globally popular titles).", "ru": "Де-биас популярности выключен — рекомендации фильмов идут по сырой модели (больше глобально популярного).", "uk": "Де-біас популярності вимкнено — рекомендації фільмів ідуть за сирою моделлю (більше глобально популярного)."},
+
     # ---------------- Bot command descriptions ----------------
     "cmd_desc_start":    {"en": "Start", "ru": "Начать", "uk": "Почати"},
     "cmd_desc_list":     {"en": "My list", "ru": "Мой список", "uk": "Мій список"},
@@ -132,6 +146,7 @@ I18N: Dict[str, Dict[str, str]] = {
     "cmd_desc_trending": {"en": "What's trending", "ru": "Что сейчас смотрят", "uk": "Що зараз дивляться"},
     "cmd_desc_clear":    {"en": "Clear list", "ru": "Очистить список", "uk": "Очистити список"},
     "cmd_desc_lang":     {"en": "Change language", "ru": "Сменить язык", "uk": "Змінити мову"},
+    "cmd_desc_debias":   {"en": "Popularity de-bias", "ru": "Де-биас популярности", "uk": "Де-біас популярності"},
 }
 
 

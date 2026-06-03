@@ -467,6 +467,39 @@ async def cb_lang(c: types.CallbackQuery):
     await c.answer()
 
 
+def _debias_keyboard(lang: str, current: bool) -> types.InlineKeyboardMarkup:
+    # Mark the active mode with a dot so the current choice is visible.
+    on_label = ("• " if current else "") + T("debias_on", lang)
+    off_label = ("• " if not current else "") + T("debias_off", lang)
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text=on_label, callback_data="debias_on"),
+        types.InlineKeyboardButton(text=off_label, callback_data="debias_off"),
+    )
+    return kb.as_markup()
+
+
+@dp.message(Command("debias"))
+async def cmd_debias(m: types.Message):
+    lang = _resolve_lang(m.from_user)
+    current = session_store.get_debias(m.from_user.id)
+    await m.answer(
+        T("debias_prompt", lang),
+        reply_markup=_debias_keyboard(lang, current),
+    )
+
+
+@dp.callback_query(F.data.in_({"debias_on", "debias_off"}))
+async def cb_debias(c: types.CallbackQuery):
+    lang = _resolve_lang(c.from_user)
+    on = c.data == "debias_on"
+    session_store.set_debias(c.from_user.id, on)
+    await c.message.edit_text(
+        T("debias_confirm_on" if on else "debias_confirm_off", lang),
+    )
+    await c.answer()
+
+
 async def _send_trending(target) -> None:
     lang = _resolve_lang(target.from_user)
     try:
@@ -789,17 +822,23 @@ async def _send_recs(reply_target, uid: int, mode: str) -> None:
 
     reply_src = reply_target.message if is_cb else reply_target
     status = await reply_src.answer(T("loading_recs", lang))
+    # Per-user popularity de-bias (/debias). Passed per call — the movies engine
+    # is shared and recs run concurrently in threads, so mutating its attribute
+    # would race across users. TV has no de-bias. 0.5 mirrors the bot/test default.
+    debias = 0.5 if session_store.get_debias(uid) else 0.0
     try:
         if mode == "movie":
             recs = await asyncio.to_thread(
-                router.recs_movie, tmdb_ids, top_k=8
+                router.recs_movie, tmdb_ids, top_k=8, popularity_debias=debias
             )
             header = T("header_recs_movies", lang)
         elif mode == "tv":
             recs = await asyncio.to_thread(router.recs_tv, tmdb_ids, top_k=8)
             header = T("header_recs_tv", lang)
         else:
-            recs = await asyncio.to_thread(router.recs_all, tmdb_ids, top_k=8)
+            recs = await asyncio.to_thread(
+                router.recs_all, tmdb_ids, top_k=8, popularity_debias=debias
+            )
             header = T("header_recs", lang)
     except Exception:
         logger.exception("Recommendation failure")
@@ -913,6 +952,7 @@ async def main():
             types.BotCommand(command="trending", description="Что сейчас смотрят"),
             types.BotCommand(command="clear", description="Очистить список"),
             types.BotCommand(command="lang", description="Сменить язык / Change language"),
+            types.BotCommand(command="debias", description="Де-биас популярности / Popularity de-bias"),
         ]), timeout=5.0)
         print("✅ Меню команд установлено.")
     except Exception as e:
