@@ -4,9 +4,9 @@ All datasets live under `data/raw/`. This guide explains which sources each
 model needs, where to get them, and the CSV format the `make_dataset.py`
 pipeline expects.
 
-When building through the GUI (`python -m recommendation_system.models.gnn.trainer_gui`
-→ "Dataset" tab), a missing **required** source is blocked by a pre-flight check
-that links back to this document.
+When building through the GUI (`recsys-gui` → "Dataset" tab), a missing
+**required** source is blocked by a pre-flight check that links back to this
+document.
 
 > **Note on the TV dataset:** the Trakt.tv signal used by the TV model was
 > **collected from scratch for this project** — see
@@ -98,7 +98,7 @@ Two ways to obtain the CSVs:
 #### (a) Self-collect via `trakt_collector.py` (≈2 days)
 
 ```bash
-python -m recommendation_system.data.trakt_collector
+recsys-trakt
 ```
 
 The script walks the Trakt API under rate limits; it discovers popular shows and
@@ -194,7 +194,7 @@ ASIN → tmdb_id mapping is done by cleaned title (see `load_amazon_interactions
 
 Any source can be overridden from the GUI without editing `make_dataset.py`:
 
-1. Run `python -m recommendation_system.models.gnn.trainer_gui`.
+1. Run `recsys-gui`.
 2. Go to the "Dataset" tab.
 3. Expand the "Sources" expander.
 4. For the field you want, click the folder/file icon → file picker.

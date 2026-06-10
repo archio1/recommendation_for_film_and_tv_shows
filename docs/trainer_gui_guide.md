@@ -46,8 +46,8 @@ parquet/checkpoints, you've skipped a step above.
 ## Launch
 
 ```powershell
-# From the repo root (package installed via `pip install -e .` / `uv sync`).
-python -m recommendation_system.models.gnn.trainer_gui
+# Package installed via `pip install -e .` / `uv sync`.
+recsys-gui      # long form: python -m recommendation_system.models.gnn.trainer_gui
 ```
 
 On startup the GUI:
@@ -325,7 +325,7 @@ If the files are missing:
 Build the index:
 
 ```powershell
-python -m recommendation_system.models.gnn.compute_embeddings --to-faiss
+recsys-embed --to-faiss
 ```
 
 After building, **restart the GUI** (Tab 3 only checks for the index at creation time).

@@ -21,12 +21,12 @@ If you received the artifacts archive from the author, no build is needed:
 
 ```bash
 git clone <this repo> && cd recommendation_for_film_and_tv_shows
-pip install -e .        # or: uv sync
+pip install -e .        # or: uv sync — also installs the recsys-* commands below
 
 # unpack the artifacts archive into the repo root; it provides:
 #   data/processed/{movies,tv}/   models/{movies,tv}/   src/recommendation_system/faiss_index/
 
-python -m recommendation_system.models.gnn.trainer_gui    # desktop GUI — needs no tokens
+recsys-gui              # desktop GUI — needs no tokens
 ```
 
 To run the **Telegram bot** instead, first create `.env` in the repo root:
@@ -37,13 +37,13 @@ TELEGRAM_BOT_TOKEN=...    # your own bot token from @BotFather
 ```
 
 ```bash
-python -m recommendation_system.models.gnn.movie_bot
+recsys-bot
 ```
 
 ### Option B — build everything from scratch
 
 ```bash
-pip install -e .        # or: uv sync
+pip install -e .        # or: uv sync — also installs the recsys-* commands
 
 # 1. Raw data → data/raw/
 #    movies: MovieLens 32M — https://grouplens.org/datasets/movielens/32m/
@@ -51,27 +51,28 @@ pip install -e .        # or: uv sync
 #            (self-collecting them takes days; ask the author for the CSVs)
 
 # 2. Build the datasets (minutes)
-python -m recommendation_system.data.make_dataset --domain all
+recsys-dataset --domain all
 
 # 3. Train both models (tv trains anywhere; the movies graph is large —
 #    use a big-memory GPU or Colab, see docs/setup_from_scratch.md)
-python -m recommendation_system.models.gnn.trainer --domain movies --epochs 30
-python -m recommendation_system.models.gnn.trainer --domain tv     --epochs 30
+recsys-train --domain movies --epochs 30
+recsys-train --domain tv     --epochs 30
 
 # 4. Embeddings + FAISS catalog (minutes; downloads SBERT once)
-python -m recommendation_system.models.gnn.compute_embeddings --domain all --to-faiss
+recsys-embed --domain all --to-faiss
 
 # 5. Run — GUI needs no tokens; the bot needs .env (see Option A)
-python -m recommendation_system.models.gnn.trainer_gui
-python -m recommendation_system.models.gnn.movie_bot
+recsys-gui
+recsys-bot
 ```
 
 What each step does and produces — **[docs/setup_from_scratch.md](docs/setup_from_scratch.md)**.
 The admin GUI is documented in **[docs/trainer_gui_guide.md](docs/trainer_gui_guide.md)**.
 
-> Python ≥ 3.10 (developed on 3.13). Every entry point runs as
-> `python -m recommendation_system.…` from the repo root — in PyCharm use
-> **module**-mode run configurations, not script paths.
+> Python ≥ 3.10 (developed on 3.13). The `recsys-*` commands are installed into the
+> active environment by `pip install -e .`; the long form
+> `python -m recommendation_system.…` works identically (PyCharm: use module-mode
+> run configurations, not script paths).
 >
 > **GPU note:** `pip install -e .` installs the **CPU** torch build, which is enough
 > to serve the bot and GUI. For GPU **training**, install the CUDA build matching

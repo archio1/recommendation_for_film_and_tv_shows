@@ -26,11 +26,21 @@ One style for everything. Install the package editable once:
 pip install -e .      # or: uv sync
 ```
 
-then run any entry point as a module from the repo root:
+This also installs short console commands into the environment — they are the
+canonical way to run everything:
 
-```powershell
-python -m recommendation_system.models.gnn.movie_bot
-```
+| Command | Module behind it |
+|---|---|
+| `recsys-dataset` | `recommendation_system.data.make_dataset` |
+| `recsys-train` | `recommendation_system.models.gnn.trainer` |
+| `recsys-embed` | `recommendation_system.models.gnn.compute_embeddings` |
+| `recsys-bot` | `recommendation_system.models.gnn.movie_bot` |
+| `recsys-gui` | `recommendation_system.models.gnn.trainer_gui` |
+| `recsys-fill-cache` | `recommendation_system.models.gnn.fill_cache` |
+| `recsys-check-data` | `recommendation_system.data.check_data` |
+| `recsys-trakt` | `recommendation_system.data.trakt_collector` |
+
+The long form `python -m recommendation_system.…` works identically.
 
 All filesystem paths are resolved by `recommendation_system/paths.py` (it finds the
 repo root by walking up to `pyproject.toml`), so commands work from any current
@@ -51,12 +61,12 @@ raw data ──▶ make_dataset ──▶ trainer (×2 domains) ──▶ comput
 
 | # | Command | Produces |
 |---|---------|----------|
-| 1 | (manual download) + optional `trakt_collector` | `data/raw/…` raw inputs |
-| 2 | `make_dataset --domain all` | `data/processed/{movies,tv}/*_final.parquet` + `id_mapping.json` |
-| 3 | `trainer --domain movies` and `--domain tv` | `models/{domain}/lightgcn_{domain}_best_v{N}.pt` (+ sidecar `.json`) |
-| 4 | `compute_embeddings --domain all --to-faiss` | per-domain `overview_embeddings.npy` **and** the shared FAISS catalog |
-| 5 | *(optional)* `fill_cache` | warmed translation cache under `data/processed/cache/` |
-| 6 | `movie_bot` / `trainer_gui` | the running app |
+| 1 | (manual download) + optional `recsys-trakt` | `data/raw/…` raw inputs |
+| 2 | `recsys-dataset --domain all` | `data/processed/{movies,tv}/*_final.parquet` + `id_mapping.json` |
+| 3 | `recsys-train --domain movies` and `--domain tv` | `models/{domain}/lightgcn_{domain}_best_v{N}.pt` (+ sidecar `.json`) |
+| 4 | `recsys-embed --domain all --to-faiss` | per-domain `overview_embeddings.npy` **and** the shared FAISS catalog |
+| 5 | *(optional)* `recsys-fill-cache` | warmed translation cache under `data/processed/cache/` |
+| 6 | `recsys-bot` / `recsys-gui` | the running app |
 
 ---
 
@@ -87,7 +97,7 @@ download them, and the exact CSV schemas are in
   yourself (multi-day, resumable) or supply any CSV matching the schema contract:
 
   ```powershell
-  python -m recommendation_system.data.trakt_collector
+  recsys-trakt
   ```
 
   Checkpoints in `data/raw/trakt_collector.db` — safe to interrupt and resume.
@@ -98,7 +108,7 @@ download them, and the exact CSV schemas are in
 ## 2. Build the datasets
 
 ```powershell
-python -m recommendation_system.data.make_dataset --domain all   # movies + tv
+recsys-dataset --domain all   # movies + tv
 # or per domain: --domain movies   /   --domain tv
 ```
 
@@ -119,8 +129,8 @@ You can also do this from the GUI **Dataset** tab — see
 Two independent LightGCN models, one per domain:
 
 ```powershell
-python -m recommendation_system.models.gnn.trainer --domain movies --epochs 30
-python -m recommendation_system.models.gnn.trainer --domain tv     --epochs 30
+recsys-train --domain movies --epochs 30
+recsys-train --domain tv     --epochs 30
 ```
 
 Each writes an **auto-versioned** checkpoint `models/{domain}/lightgcn_{domain}_best_v{N}.pt`
@@ -138,7 +148,7 @@ cold-start index. The `--to-faiss` flag is what actually populates the catalog;
 without it you only get the `.npy` files.
 
 ```powershell
-python -m recommendation_system.models.gnn.compute_embeddings --domain all --to-faiss
+recsys-embed --domain all --to-faiss
 ```
 
 Produces:
@@ -155,7 +165,7 @@ idempotent (upsert by id).
 ## 5. (Optional) Warm the translation cache
 
 ```powershell
-python -m recommendation_system.models.gnn.fill_cache
+recsys-fill-cache
 ```
 
 Pre-fetches RU/UK TMDb translations into the SQLite cache under
@@ -173,10 +183,10 @@ can **skip this** — cold-start fills the cache lazily on demand (see below).
 
 ```powershell
 # Telegram bot
-python -m recommendation_system.models.gnn.movie_bot
+recsys-bot
 
 # or the desktop admin GUI (dataset build / train / inference)
-python -m recommendation_system.models.gnn.trainer_gui
+recsys-gui
 ```
 
 The GUI **Inference** tab has a **Popularity de-bias** toggle (default **on**, λ=0.5
