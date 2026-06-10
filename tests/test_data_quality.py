@@ -46,8 +46,7 @@ def test_localized_columns_exist(domain: str):
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     assert not missing, (
         f"{domain}: required columns missing from parquet: {missing}. "
-        f"Run scripts/backfill_uk_translations.py and "
-        f"scripts/backfill_ru_translations.py."
+        f"Run recsys-backfill --lang ru and --lang uk for this domain."
     )
 
 
@@ -66,7 +65,7 @@ def test_title_ru_populated(domain: str):
     coverage = df["title_ru"].notna().mean()
     assert coverage >= TITLE_COVERAGE_FLOOR, (
         f"{domain}: title_ru non-null = {coverage:.1%} < {TITLE_COVERAGE_FLOOR:.0%}. "
-        f"Run python -m scripts.backfill_ru_translations --domain {domain}."
+        f"Run recsys-backfill --lang ru --domain {domain}."
     )
 
 
@@ -79,7 +78,7 @@ def test_title_uk_populated(domain: str):
     coverage = df["title_uk"].notna().mean()
     assert coverage >= TITLE_COVERAGE_FLOOR, (
         f"{domain}: title_uk non-null = {coverage:.1%} < {TITLE_COVERAGE_FLOOR:.0%}. "
-        f"Run python -m scripts.backfill_uk_translations --domain {domain}."
+        f"Run recsys-backfill --lang uk --domain {domain}."
     )
 
 

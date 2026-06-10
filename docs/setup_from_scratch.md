@@ -37,6 +37,7 @@ canonical way to run everything:
 | `recsys-bot` | `recommendation_system.models.gnn.movie_bot` |
 | `recsys-gui` | `recommendation_system.models.gnn.trainer_gui` |
 | `recsys-fill-cache` | `recommendation_system.models.gnn.fill_cache` |
+| `recsys-backfill` | `recommendation_system.data.backfill_translations` |
 | `recsys-check-data` | `recommendation_system.data.check_data` |
 | `recsys-trakt` | `recommendation_system.data.trakt_collector` |
 
@@ -172,10 +173,9 @@ Pre-fetches RU/UK TMDb translations into the SQLite cache under
 `data/processed/cache/` so the first user requests don't pay live API latency. You
 can **skip this** — cold-start fills the cache lazily on demand (see below).
 
-> The standalone `scripts/backfill_ru_translations.py` /
-> `scripts/backfill_uk_translations.py` are a separate, resumable way to add RU/UK
-> columns directly into the metadata parquet. `scripts/admin_users.py` is a
-> read-only viewer for the bot's user-session DB.
+> `recsys-backfill --lang ru|uk --domain movies|tv` is a separate, resumable way
+> to add RU/UK columns directly into the metadata parquet. `scripts/admin_users.py`
+> is a read-only viewer for the bot's user-session DB.
 
 ---
 

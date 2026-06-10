@@ -50,6 +50,7 @@ recsys-train = "recommendation_system.models.gnn.trainer:main"
 recsys-dataset = "recommendation_system.data.make_dataset:main"
 recsys-embed = "recommendation_system.models.gnn.compute_embeddings:main"
 recsys-fill-cache = "recommendation_system.models.gnn.fill_cache:run_prefetch"
+recsys-backfill = "recommendation_system.data.backfill_translations:main"
 recsys-check-data = "recommendation_system.data.check_data:main"
 recsys-trakt = "recommendation_system.data.trakt_collector:main"
 
