@@ -5,7 +5,7 @@ import seaborn as sns
 from sklearn.manifold import TSNE
 import numpy as np
 
-from recommendation_system.paths import MODELS_DIR, PROCESSED_DIR
+from recommendation_system.paths import FIGURES_DIR, MODELS_DIR, PROCESSED_DIR
 
 # Пути (те же)
 DATA_DIR = PROCESSED_DIR
@@ -82,7 +82,7 @@ def visualize():
     plt.legend(title='Жанр')
     plt.grid(True, alpha=0.3)
 
-    output_path = BASE_DIR / 'reports' / 'figures' / 'movie_map.png'
+    output_path = FIGURES_DIR / 'movie_map.png'
     plt.savefig(output_path)
     print(f"✅ График сохранен: {output_path}")
     plt.show()

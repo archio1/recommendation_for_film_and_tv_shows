@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -112,7 +113,7 @@ if FAISS_INDEX.exists() and FAISS_META.exists():
 else:
     raise RuntimeError(
         f"FAISS catalog not found at {FAISS_INDEX}. "
-        "Run: python -m recommendation_system.models.gnn.compute_embeddings --to-faiss"
+        "Run: recsys-embed --to-faiss"
     )
 
 cold_start: Optional[ColdStartIngestor] = None
@@ -962,5 +963,10 @@ async def main():
     await dp.start_polling(bot)
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console-script entry point (`recsys-bot`, см. [project.scripts])."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

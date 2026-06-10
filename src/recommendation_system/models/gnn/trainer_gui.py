@@ -11,17 +11,21 @@ trainer_gui.py — точка входа Flet-GUI для dual-LightGCN стек�
     gui/data_tab.py      — вкладка «Данные»
     gui/app.py           — TrainerGuiApp + main()
 
-Запуск: python -m recommendation_system.models.gnn.trainer_gui
+Запуск: recsys-gui  (или python -m recommendation_system.models.gnn.trainer_gui)
 """
 
 from __future__ import annotations
 
 from recommendation_system.models.gnn.gui.app import TrainerGuiApp, main  # noqa: F401
 
-if __name__ == "__main__":
-    # Windows-консоль (cp1251) не умеет печатать эмодзи (📊 ⏳ ✅ …),
-    # из-за чего фоновый _run_router_load молча падал UnicodeEncodeError-ом
-    # внутри inference_engine.print(...). Заворачиваем stdout/stderr в UTF-8.
+
+def run() -> None:
+    """Console-script entry point (`recsys-gui`, см. [project.scripts]).
+
+    Windows-консоль (cp1251) не умеет печатать эмодзи (📊 ⏳ ✅ …),
+    из-за чего фоновый _run_router_load молча падал UnicodeEncodeError-ом
+    внутри inference_engine.print(...). Заворачиваем stdout/stderr в UTF-8.
+    """
     import sys
 
     import flet as ft
@@ -31,3 +35,7 @@ if __name__ == "__main__":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     ft.app(target=main)
+
+
+if __name__ == "__main__":
+    run()

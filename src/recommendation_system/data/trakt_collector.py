@@ -906,9 +906,9 @@ def main():
     if args.db:
         db_path = Path(args.db)
     else:
-        db_path = project_root / "data" / "raw" / "trakt_collector.db"
+        db_path = RAW_DIR / "trakt_collector.db"
 
-    logger.info(f"Project root: {project_root}")
+    logger.info(f"Raw data dir:  {RAW_DIR}")
     logger.info(f"Checkpoint DB: {db_path}")
     logger.info(f"Settings: max_shows={args.max_shows}, max_users={args.max_users}, "
                 f"comment_pages={args.comment_pages}, list_pages={args.list_pages}, "
