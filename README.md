@@ -10,6 +10,76 @@ cross-domain suggestions and cold-start, served through a trilingual
 
 ---
 
+## Quick start
+
+Trained models, processed datasets, and the FAISS catalog live **outside git** —
+pick the option that matches what you have.
+
+### Option A — run with prebuilt artifacts (~2 minutes)
+
+If you received the artifacts archive from the author, no build is needed:
+
+```bash
+git clone <this repo> && cd recommendation_for_film_and_tv_shows
+pip install -e .        # or: uv sync
+
+# unpack the artifacts archive into the repo root; it provides:
+#   data/processed/{movies,tv}/   models/{movies,tv}/   src/recommendation_system/faiss_index/
+
+python -m recommendation_system.models.gnn.trainer_gui    # desktop GUI — needs no tokens
+```
+
+To run the **Telegram bot** instead, first create `.env` in the repo root:
+
+```bash
+TMDB_API_KEY=...          # themoviedb.org → API settings (cold-start, translations)
+TELEGRAM_BOT_TOKEN=...    # your own bot token from @BotFather
+```
+
+```bash
+python -m recommendation_system.models.gnn.movie_bot
+```
+
+### Option B — build everything from scratch
+
+```bash
+pip install -e .        # or: uv sync
+
+# 1. Raw data → data/raw/
+#    movies: MovieLens 32M — https://grouplens.org/datasets/movielens/32m/
+#    tv:     trakt_shows.csv + trakt_interactions.csv — see docs/data_sources.md
+#            (self-collecting them takes days; ask the author for the CSVs)
+
+# 2. Build the datasets (minutes)
+python -m recommendation_system.data.make_dataset --domain all
+
+# 3. Train both models (tv trains anywhere; the movies graph is large —
+#    use a big-memory GPU or Colab, see docs/setup_from_scratch.md)
+python -m recommendation_system.models.gnn.trainer --domain movies --epochs 30
+python -m recommendation_system.models.gnn.trainer --domain tv     --epochs 30
+
+# 4. Embeddings + FAISS catalog (minutes; downloads SBERT once)
+python -m recommendation_system.models.gnn.compute_embeddings --domain all --to-faiss
+
+# 5. Run — GUI needs no tokens; the bot needs .env (see Option A)
+python -m recommendation_system.models.gnn.trainer_gui
+python -m recommendation_system.models.gnn.movie_bot
+```
+
+What each step does and produces — **[docs/setup_from_scratch.md](docs/setup_from_scratch.md)**.
+The admin GUI is documented in **[docs/trainer_gui_guide.md](docs/trainer_gui_guide.md)**.
+
+> Python ≥ 3.10 (developed on 3.13). Every entry point runs as
+> `python -m recommendation_system.…` from the repo root — in PyCharm use
+> **module**-mode run configurations, not script paths.
+>
+> **GPU note:** `pip install -e .` installs the **CPU** torch build, which is enough
+> to serve the bot and GUI. For GPU **training**, install the CUDA build matching
+> your toolkit instead, e.g.
+> `uv pip install torch==2.6.0+cu124 --index https://download.pytorch.org/whl/cu124`.
+
+---
+
 ## Core idea
 
 Two **independent LightGCN models** — one for movies, one for TV — each with its
@@ -101,43 +171,6 @@ src/recommendation_system/
 tests/                    # pytest suite (unit + behavioral quality gates)
 docs/                     # data_sources.md, trainer_gui_guide.md, …
 ```
-
----
-
-## Getting started
-
-> Requires Python 3.13, a TMDb API key (for cold-start/translations), and a
-> Telegram bot token (to run the bot). Trained model artifacts and processed
-> data live outside the repo.
-
-```bash
-pip install -r requirements.txt          # or: uv sync
-
-# configure secrets in .env
-TMDB_API_KEY=...
-TELEGRAM_BOT_TOKEN=...
-
-# run the Telegram bot — run the file directly (its modules use sibling imports,
-# so the `-m` form does not resolve them)
-python src/recommendation_system/models/gnn/movie_bot.py
-
-# or launch the desktop admin GUI (dataset build / train / test)
-# PowerShell: PYTHONPATH must include src/
-$env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.trainer_gui
-```
-
-> **GPU note:** dependencies (incl. `torch` + PyTorch Geometric) are declared in
-> `pyproject.toml`; `uv sync` / `pip install -e .` installs the **CPU** torch build,
-> which is enough to serve the bot and GUI. For GPU **training**, install the CUDA
-> build matching your toolkit instead, e.g.
-> `uv pip install torch==2.6.0+cu124 --index https://download.pytorch.org/whl/cu124`.
-
-Starting from a clean checkout (no models or processed data yet)? Follow
-**[docs/setup_from_scratch.md](docs/setup_from_scratch.md)** — the ordered pipeline
-that builds every artifact (datasets → models → FAISS catalog → caches) before you
-run the bot. The admin GUI is documented in
-**[docs/trainer_gui_guide.md](docs/trainer_gui_guide.md)**; the data pipeline in
-**[docs/data_sources.md](docs/data_sources.md)**.
 
 ---
 
