@@ -1,5 +1,9 @@
 # Setup from Scratch — Build All Artifacts, Then Run
 
+> **Just want the commands?** The copy-paste sequence is in
+> [README → Quick start](../README.md#quick-start). This guide explains what each
+> step does and what it produces.
+
 This guide takes a **clean checkout** all the way to a running bot / GUI. It is the
 end-to-end, ordered version of the scattered commands in the other docs: what to run,
 **in what order**, what each step produces, and which files are *libraries* you never
@@ -16,17 +20,25 @@ Trained models, processed parquet, the FAISS catalog, and SQLite caches all live
 
 ## How commands are invoked
 
-Two invocation styles, and they are **not interchangeable** — this trips people up:
+One style for everything. Install the package editable once:
 
-- **`movie_bot.py` and `trainer.py` → run the file directly.** They use sibling
-  imports (`from lightgcn import …`), so their own folder must be `sys.path[0]`. The
-  `-m` form raises `ModuleNotFoundError`.
-- **Everything else → `python -m recommendation_system.…`.** This needs the package
-  importable: either install it editable (`pip install -e .` / `uv sync`) **or**
-  prefix with `PYTHONPATH=src` (PowerShell: `$env:PYTHONPATH = "src"; …`).
+```powershell
+pip install -e .      # or: uv sync
+```
 
-All commands run from the repo root. Examples below use PowerShell; on bash drop the
-`$env:` prefix and use `PYTHONPATH=src python -m …`.
+then run any entry point as a module from the repo root:
+
+```powershell
+python -m recommendation_system.models.gnn.movie_bot
+```
+
+All filesystem paths are resolved by `recommendation_system/paths.py` (it finds the
+repo root by walking up to `pyproject.toml`), so commands work from any current
+directory. To point data/models/reports somewhere else, set `RECSYS_PROJECT_ROOT`.
+
+> PyCharm note: run configurations must use **module** mode
+> (`recommendation_system.models.gnn.movie_bot`), not script-path mode —
+> running the `.py` files directly is no longer supported.
 
 ---
 
@@ -41,10 +53,10 @@ raw data ──▶ make_dataset ──▶ trainer (×2 domains) ──▶ comput
 |---|---------|----------|
 | 1 | (manual download) + optional `trakt_collector` | `data/raw/…` raw inputs |
 | 2 | `make_dataset --domain all` | `data/processed/{movies,tv}/*_final.parquet` + `id_mapping.json` |
-| 3 | `trainer.py --domain movies` and `--domain tv` | `models/{domain}/lightgcn_{domain}_best_v{N}.pt` (+ sidecar `.json`) |
+| 3 | `trainer --domain movies` and `--domain tv` | `models/{domain}/lightgcn_{domain}_best_v{N}.pt` (+ sidecar `.json`) |
 | 4 | `compute_embeddings --domain all --to-faiss` | per-domain `overview_embeddings.npy` **and** the shared FAISS catalog |
-| 5 | *(optional)* `fill_cache.py` | warmed translation cache under `data/processed/cache/` |
-| 6 | `movie_bot.py` / `trainer_gui` | the running app |
+| 5 | *(optional)* `fill_cache` | warmed translation cache under `data/processed/cache/` |
+| 6 | `movie_bot` / `trainer_gui` | the running app |
 
 ---
 
@@ -57,7 +69,7 @@ TELEGRAM_BOT_TOKEN=...    # only needed to run the Telegram bot
 ```
 
 ```powershell
-pip install -r requirements.txt     # or: uv sync
+pip install -e .     # or: uv sync — installs dependencies AND the package itself
 ```
 
 Python ≥ 3.10 (developed on 3.13).
@@ -104,11 +116,11 @@ You can also do this from the GUI **Dataset** tab — see
 
 ## 3. Train the two models
 
-Two independent LightGCN models, one per domain. **Run the file directly:**
+Two independent LightGCN models, one per domain:
 
 ```powershell
-python src/recommendation_system/models/gnn/trainer.py --domain movies --epochs 30
-python src/recommendation_system/models/gnn/trainer.py --domain tv     --epochs 30
+python -m recommendation_system.models.gnn.trainer --domain movies --epochs 30
+python -m recommendation_system.models.gnn.trainer --domain tv     --epochs 30
 ```
 
 Each writes an **auto-versioned** checkpoint `models/{domain}/lightgcn_{domain}_best_v{N}.pt`
@@ -126,7 +138,7 @@ cold-start index. The `--to-faiss` flag is what actually populates the catalog;
 without it you only get the `.npy` files.
 
 ```powershell
-$env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.compute_embeddings --domain all --to-faiss
+python -m recommendation_system.models.gnn.compute_embeddings --domain all --to-faiss
 ```
 
 Produces:
@@ -143,7 +155,7 @@ idempotent (upsert by id).
 ## 5. (Optional) Warm the translation cache
 
 ```powershell
-python src/recommendation_system/models/gnn/fill_cache.py
+python -m recommendation_system.models.gnn.fill_cache
 ```
 
 Pre-fetches RU/UK TMDb translations into the SQLite cache under
@@ -160,11 +172,11 @@ can **skip this** — cold-start fills the cache lazily on demand (see below).
 ## 6. Run
 
 ```powershell
-# Telegram bot — run the file directly (sibling imports)
-python src/recommendation_system/models/gnn/movie_bot.py
+# Telegram bot
+python -m recommendation_system.models.gnn.movie_bot
 
 # or the desktop admin GUI (dataset build / train / inference)
-$env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.trainer_gui
+python -m recommendation_system.models.gnn.trainer_gui
 ```
 
 The GUI **Inference** tab has a **Popularity de-bias** toggle (default **on**, λ=0.5

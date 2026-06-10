@@ -46,8 +46,8 @@ parquet/checkpoints, you've skipped a step above.
 ## Launch
 
 ```powershell
-# From the repo root. PYTHONPATH=src is required.
-$env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.trainer_gui
+# From the repo root (package installed via `pip install -e .` / `uv sync`).
+python -m recommendation_system.models.gnn.trainer_gui
 ```
 
 On startup the GUI:
@@ -325,7 +325,7 @@ If the files are missing:
 Build the index:
 
 ```powershell
-$env:PYTHONPATH = "src"; python -m recommendation_system.models.gnn.compute_embeddings --to-faiss
+python -m recommendation_system.models.gnn.compute_embeddings --to-faiss
 ```
 
 After building, **restart the GUI** (Tab 3 only checks for the index at creation time).
