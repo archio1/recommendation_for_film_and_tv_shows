@@ -13,10 +13,10 @@ matching what `user_likes` stores). Items missing from parquet print as
 
 Strictly read-only — no add/remove/clear methods are imported.
 
-Usage:
-    PYTHONPATH=src python scripts/admin_users.py --list
-    PYTHONPATH=src python scripts/admin_users.py --user 12345
-    PYTHONPATH=src python scripts/admin_users.py --top 10
+Usage (package must be installed: pip install -e .):
+    python scripts/admin_users.py --list
+    python scripts/admin_users.py --user 12345
+    python scripts/admin_users.py --top 10
 """
 
 from __future__ import annotations

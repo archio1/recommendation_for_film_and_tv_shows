@@ -51,6 +51,20 @@ directory. To point data/models/reports somewhere else, set `RECSYS_PROJECT_ROOT
 > (`recommendation_system.models.gnn.movie_bot`), not script-path mode —
 > running the `.py` files directly is no longer supported.
 
+### Linux / WSL notes
+
+Everything except the GUI runs as-is (paths are `pathlib`-based; torch and
+faiss-cpu ship Linux wheels; the Windows console-emoji issues don't exist there).
+Specifics:
+
+- `recsys-gui` (Flet desktop) needs a display: on WSL2 that's WSLg (Windows 11)
+  plus system libs — `sudo apt install libgtk-3-0 libmpv2` (older distros: `libmpv1`).
+- On Linux `pip install -e .` pulls the **CUDA** torch build by default (several GB).
+  For a lean CPU-only install run
+  `pip install torch --index-url https://download.pytorch.org/whl/cpu` first.
+- GPU **training** works in WSL2 out of the box — only the Windows-side NVIDIA
+  driver is required.
+
 ---
 
 ## Pipeline at a glance
