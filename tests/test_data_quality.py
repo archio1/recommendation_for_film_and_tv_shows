@@ -13,15 +13,14 @@ data artifacts) — runs as a real assertion when artifacts are present.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from recommendation_system.paths import MOVIES_DIR, TV_DIR
+
 PARQUET_PATHS = {
-    "movies": PROJECT_ROOT / "data" / "processed" / "movies" / "items_metadata_final.parquet",
-    "tv": PROJECT_ROOT / "data" / "processed" / "tv" / "items_metadata_final.parquet",
+    "movies": MOVIES_DIR / "items_metadata_final.parquet",
+    "tv": TV_DIR / "items_metadata_final.parquet",
 }
 
 REQUIRED_COLUMNS = ("title", "title_ru", "title_uk", "overview", "overview_ru", "overview_uk")

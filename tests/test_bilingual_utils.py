@@ -1,6 +1,6 @@
 import pytest
 import pandas as pd
-from src.recommendation_system.models.gnn.bilingual_utils import (
+from recommendation_system.models.gnn.bilingual_utils import (
     ScalableMovieIntelligence,
     TMDBTranslationCache,
     GENRE_EN_TO_RU,

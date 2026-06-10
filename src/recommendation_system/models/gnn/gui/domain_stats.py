@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from recommendation_system.models.gnn.gui.theme import PROJECT_ROOT
+from recommendation_system.paths import PROJECT_ROOT
 
 
 @dataclass

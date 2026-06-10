@@ -20,11 +20,11 @@ from recommendation_system.models.gnn.gui.common import (
 from recommendation_system.models.gnn.gui.theme import (
     COLORS,
     GAP_M,
-    PROJECT_ROOT,
     danger_button,
     primary_button,
     secondary_button,
 )
+from recommendation_system.paths import PROJECT_ROOT
 
 if TYPE_CHECKING:
     from recommendation_system.models.gnn.gui.app import TrainerGuiApp

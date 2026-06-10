@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from bot.session_store import SessionStore
+from recommendation_system.models.gnn.bot.session_store import SessionStore
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ def test_set_lang_does_not_affect_user_likes(store):
 
 def test_lang_supported_constants():
     """Smoke-check that the whitelist matches the i18n module."""
-    from bot.i18n import SUPPORTED_LANGS as I18N_LANGS
+    from recommendation_system.models.gnn.bot.i18n import SUPPORTED_LANGS as I18N_LANGS
 
     assert set(SessionStore.SUPPORTED_LANGS) == set(I18N_LANGS)
 
@@ -163,7 +163,7 @@ def test_movie_bot_map_matches_local_shim():
         # dependency tree isn't available.
         import importlib
 
-        spec = importlib.util.find_spec("movie_bot")
+        spec = importlib.util.find_spec("recommendation_system.models.gnn.movie_bot")
         if spec is None:
             pytest.skip("movie_bot not importable in this environment")
         # Source-level inspection: read the function definition and confirm

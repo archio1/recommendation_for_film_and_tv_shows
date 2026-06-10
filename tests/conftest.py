@@ -13,39 +13,26 @@ Two layers of fixtures live here:
 
 import json
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REPORTS_DIR = PROJECT_ROOT / "reports"
-
-# Several modules in `src/recommendation_system/models/gnn/` use sibling
-# imports (e.g. `from universal_search import ...`) which work when the
-# bot is started from that directory but fail under pytest's package-style
-# discovery. Mirror the runtime layout by putting that directory on
-# sys.path before any test module imports project code.
-_SRC_DIR = PROJECT_ROOT / "src"
-if _SRC_DIR.exists() and str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
-
-_GNN_DIR = PROJECT_ROOT / "src" / "recommendation_system" / "models" / "gnn"
-if _GNN_DIR.exists() and str(_GNN_DIR) not in sys.path:
-    sys.path.insert(0, str(_GNN_DIR))
-
-MOVIES_DIR = PROJECT_ROOT / "data" / "processed" / "movies"
-TV_DIR = PROJECT_ROOT / "data" / "processed" / "tv"
-CACHE_DIR = PROJECT_ROOT / "data" / "processed" / "cache"
-
-MOVIES_CHECKPOINT = PROJECT_ROOT / "models" / "movies" / "lightgcn_movies_best_v4.pt"
-TV_CHECKPOINT = PROJECT_ROOT / "models" / "tv" / "lightgcn_tv_best_v4.pt"
-
-FAISS_DIR = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index"
-FAISS_INDEX = FAISS_DIR / "catalog.faiss"
-FAISS_META = FAISS_DIR / "catalog_meta.json"
+# Project code is importable as the `recommendation_system` package: either via
+# the editable install (`pip install -e .`) or via `pythonpath = ["src"]` in
+# pyproject's pytest config. All on-disk paths come from the central paths module.
+from recommendation_system.paths import (
+    CACHE_DIR,
+    FAISS_INDEX,
+    FAISS_META,
+    MOVIES_CHECKPOINT,
+    MOVIES_DIR,
+    PROJECT_ROOT,
+    REPORTS_DIR,
+    TV_CHECKPOINT,
+    TV_DIR,
+)
 
 
 # --------------------------------------------------------------------------

@@ -14,31 +14,26 @@ from __future__ import annotations
 import math
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SRC_DIR = PROJECT_ROOT / "src"
-GNN_DIR = SRC_DIR / "recommendation_system" / "models" / "gnn"
-TESTS_DIR = PROJECT_ROOT / "tests"
+from recommendation_system.paths import (
+    CACHE_DIR,
+    FAISS_INDEX,
+    FAISS_META,
+    FIGURES_DIR,
+    MOVIES_CHECKPOINT,
+    MOVIES_DIR,
+    PROJECT_ROOT,
+    TV_CHECKPOINT,
+    TV_DIR,
+)
 
-for p in (SRC_DIR, GNN_DIR, str(PROJECT_ROOT)):
-    sp = str(p)
-    if sp not in sys.path:
-        sys.path.insert(0, sp)
+# Корень репо нужен в sys.path ради `from tests._quality_helpers import ...`.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-DATA_DIR = PROJECT_ROOT / "data" / "processed"
-MOVIES_DIR = DATA_DIR / "movies"
-TV_DIR = DATA_DIR / "tv"
-CACHE_DIR = DATA_DIR / "cache"
-MOVIES_CHECKPOINT = PROJECT_ROOT / "models" / "movies" / "lightgcn_movies_best_v4.pt"
-TV_CHECKPOINT = PROJECT_ROOT / "models" / "tv" / "lightgcn_tv_best_v4.pt"
-FAISS_DIR = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index"
-FAISS_INDEX = FAISS_DIR / "catalog.faiss"
-FAISS_META = FAISS_DIR / "catalog_meta.json"
-
-OUTPUT_HTML = PROJECT_ROOT / "reports" / "figures" / "graph_neighbors_demo.html"
+OUTPUT_HTML = FIGURES_DIR / "graph_neighbors_demo.html"
 
 NEIGHBORS_K = 10
 TOP_K_RECS = 15

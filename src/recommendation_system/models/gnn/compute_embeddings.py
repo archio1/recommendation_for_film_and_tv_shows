@@ -34,10 +34,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from recommendation_system.paths import FAISS_DIR, PROCESSED_DIR, PROJECT_ROOT
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "processed"
-DEFAULT_FAISS_DIR = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index"
+DEFAULT_DATA_DIR = PROCESSED_DIR
+DEFAULT_FAISS_DIR = FAISS_DIR
 DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 METADATA_FILENAME = "items_metadata_final.parquet"
 EMBEDDINGS_FILENAME = "overview_embeddings.npy"

@@ -1,13 +1,8 @@
-"""Общие константы оформления и пути GUI (нулевой слой — без внутренних импортов)."""
+"""Общие константы оформления GUI (нулевой слой — без внутренних импортов)."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import flet as ft
-
-# gui/theme.py → parents: [0]=gui [1]=gnn [2]=models [3]=recommendation_system [4]=src [5]=root
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 
 COLORS = {
     "primary": ft.Colors.BLUE_700,

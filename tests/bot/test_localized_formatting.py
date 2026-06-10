@@ -26,8 +26,8 @@ from typing import List, Optional
 
 import pytest
 
-from bilingual_utils import GENRE_EN_TO_RU, GENRE_EN_TO_UK
-from universal_search import UniversalMediaItem
+from recommendation_system.models.gnn.bilingual_utils import GENRE_EN_TO_RU, GENRE_EN_TO_UK
+from recommendation_system.models.gnn.universal_search import UniversalMediaItem
 
 
 # ---------------------------------------------------------------------------
@@ -354,16 +354,9 @@ def test_format_genres_unknown_lang_falls_to_ru():
 
 
 def test_movie_bot_formatter_contract():
-    from pathlib import Path
+    from recommendation_system.paths import PACKAGE_DIR
 
-    bot_path = (
-        Path(__file__).resolve().parents[2]
-        / "src"
-        / "recommendation_system"
-        / "models"
-        / "gnn"
-        / "movie_bot.py"
-    )
+    bot_path = PACKAGE_DIR / "models" / "gnn" / "movie_bot.py"
     if not bot_path.exists():
         pytest.skip(f"{bot_path} not found")
     src = bot_path.read_text(encoding="utf-8")

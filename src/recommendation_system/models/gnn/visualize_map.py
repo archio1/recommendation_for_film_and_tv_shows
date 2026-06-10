@@ -3,13 +3,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.manifold import TSNE
-from pathlib import Path
 import numpy as np
 
+from recommendation_system.paths import MODELS_DIR, PROCESSED_DIR
+
 # Пути (те же)
-BASE_DIR = Path(__file__).parent.parents[3]
-DATA_DIR = BASE_DIR / 'data' / 'processed'
-MODEL_PATH = BASE_DIR / 'models' / 'lightgcn_best.pt'
+DATA_DIR = PROCESSED_DIR
+MODEL_PATH = MODELS_DIR / 'lightgcn_best.pt'
 
 
 def visualize():

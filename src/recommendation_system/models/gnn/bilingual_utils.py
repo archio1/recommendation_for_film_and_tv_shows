@@ -11,7 +11,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 import pandas as pd
 import numpy as np
-from universal_search import ensure_genres, expand_compound_genres
+from recommendation_system.models.gnn.universal_search import ensure_genres, expand_compound_genres
 
 
 # Optional: TMDB API
@@ -825,7 +825,10 @@ class ScalableMovieIntelligence:
         # ---- GENRE FIX: single source of truth ----
         # Before: 15 lines of fragile ad-hoc parsing
         # After:  1 line + expand compounds
-        from universal_search import ensure_genres, expand_compound_genres
+        from recommendation_system.models.gnn.universal_search import (
+            ensure_genres,
+            expand_compound_genres,
+        )
         genres = ensure_genres(row.get('genres', []))
 
         # Russian title

@@ -1,6 +1,6 @@
 import pytest
 import torch
-from src.recommendation_system.models.gnn.lightgcn import LightGCN
+from recommendation_system.models.gnn.lightgcn import LightGCN
 
 
 @pytest.fixture

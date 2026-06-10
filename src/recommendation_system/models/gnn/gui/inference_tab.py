@@ -17,9 +17,15 @@ from recommendation_system.models.gnn.gui.common import _first_existing_ancestor
 from recommendation_system.models.gnn.gui.domain_stats import _collect_domain_stats
 from recommendation_system.models.gnn.gui.theme import (
     COLORS,
-    PROJECT_ROOT,
     accent_button,
     primary_button,
+)
+from recommendation_system.paths import (
+    CACHE_DIR,
+    FAISS_INDEX,
+    FAISS_META,
+    PROJECT_ROOT,
+    default_checkpoint,
 )
 
 if TYPE_CHECKING:
@@ -30,9 +36,9 @@ if TYPE_CHECKING:
 # Тот же константный сдвиг используется ботом, faiss_bridge и dataset pipeline.
 _TV_OFFSET = 10_000_000
 
-_FAISS_INDEX = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index" / "catalog.faiss"
-_FAISS_META = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index" / "catalog_meta.json"
-_CACHE_DIR = PROJECT_ROOT / "data" / "processed" / "cache"
+_FAISS_INDEX = FAISS_INDEX
+_FAISS_META = FAISS_META
+_CACHE_DIR = CACHE_DIR
 
 
 def _tmdb_url(item) -> str:
@@ -431,7 +437,7 @@ class InferenceTab:
         stats = _collect_domain_stats(domain)
         if stats.last_train_checkpoint:
             return stats.last_train_checkpoint
-        return f"lightgcn_{domain}_best_v4.pt"
+        return default_checkpoint(domain).name
 
     def _refresh_ckpt_display(self, domain: str) -> None:
         """Перерисовать TextField с тем, что реально загрузится."""
@@ -655,7 +661,7 @@ class InferenceTab:
         elif stats.last_train_checkpoint:
             checkpoint = stats.models_dir / stats.last_train_checkpoint
         else:
-            checkpoint = stats.models_dir / f"lightgcn_{domain}_best_v4.pt"
+            checkpoint = stats.models_dir / default_checkpoint(domain).name
         dataset_dir = stats.dataset_dir
 
         if not checkpoint.exists():

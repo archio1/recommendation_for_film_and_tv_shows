@@ -4,18 +4,18 @@ import numpy as np
 import plotly.express as px
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
-from pathlib import Path
 import json
+
+from recommendation_system.paths import FIGURES_DIR, MODELS_DIR, PROCESSED_DIR
 
 # --- НАСТРОЙКИ ---
 CLUSTERS_COUNT = 15  # На сколько групп делим фильмы
 TOP_MOVIES_TO_ANALYZE = 5000  # Берем только популярные, чтобы не засорять график
 
 # --- ПУТИ ---
-BASE_DIR = Path(__file__).parent.parents[3]
-DATA_DIR = BASE_DIR / 'data' / 'processed'
-MODEL_PATH = BASE_DIR / 'models' / 'lightgcn_best.pt'
-HTML_OUTPUT = BASE_DIR / 'reports' / 'figures' / 'interactive_map_v12k.html'
+DATA_DIR = PROCESSED_DIR
+MODEL_PATH = MODELS_DIR / 'lightgcn_best.pt'
+HTML_OUTPUT = FIGURES_DIR / 'interactive_map_v12k.html'
 
 
 def analyze_and_plot():

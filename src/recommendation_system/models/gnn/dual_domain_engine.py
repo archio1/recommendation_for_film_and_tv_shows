@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING, Iterable
 
 import numpy as np
 
-try:
-    from .faiss_bridge import TV_OFFSET, FaissCatalog
-except ImportError:
-    from faiss_bridge import TV_OFFSET, FaissCatalog
+from recommendation_system.models.gnn.faiss_bridge import TV_OFFSET, FaissCatalog
 
 if TYPE_CHECKING:
-    from cold_start import ColdStartIngestor
-    from universal_search import UniversalMediaItem, UniversalSearchEngine
+    from recommendation_system.models.gnn.cold_start import ColdStartIngestor
+    from recommendation_system.models.gnn.universal_search import (
+        UniversalMediaItem,
+        UniversalSearchEngine,
+    )
 
 
 class DualDomainEngine:

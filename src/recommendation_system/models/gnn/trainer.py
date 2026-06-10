@@ -19,10 +19,9 @@ from tqdm import tqdm
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
-sys.path.append(str(Path(__file__).parent))
-
-from lightgcn import LightGCN, BPRLoss
-from graph_builder import MovieGraphBuilder
+from recommendation_system.models.gnn.lightgcn import LightGCN, BPRLoss
+from recommendation_system.models.gnn.graph_builder import MovieGraphBuilder
+from recommendation_system.paths import MODELS_DIR, PROCESSED_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -245,7 +244,7 @@ class LightGCNTrainer:
         patience_counter = 0
 
         if output_path is None:
-            output_path = Path(__file__).resolve().parents[3] / 'models' / 'lightgcn_best.pt'
+            output_path = MODELS_DIR / 'lightgcn_best.pt'
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -399,13 +398,6 @@ class LightGCNTrainer:
             logger.info(f"График сохранён: {save_path}")
         plt.close(fig)
 
-def _resolve_project_root() -> Path:
-    p = Path(__file__).resolve()
-    while p.name != 'recommendation_for_film_and_tv_shows' and p.parent != p:
-        p = p.parent
-    return p
-
-
 def _next_versioned_path(models_dir: Path, prefix: str) -> Path:
     models_dir.mkdir(parents=True, exist_ok=True)
     pattern = re.compile(rf"^{re.escape(prefix)}_v(\d+)\.pt$")
@@ -491,8 +483,6 @@ def main(argv=None, *, on_epoch_end=None, stop_flag=None) -> int:
     """
     args = _parse_args(argv)
 
-    project_root = _resolve_project_root()
-
     # Device resolution — explicit user choice wins over auto.
     if args.device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -502,9 +492,9 @@ def main(argv=None, *, on_epoch_end=None, stop_flag=None) -> int:
             logger.warning("--device cuda requested but CUDA not available, falling back to cpu")
             device = 'cpu'
 
-    data_dir = args.data_dir or (project_root / 'data' / 'processed' / args.domain)
+    data_dir = args.data_dir or (PROCESSED_DIR / args.domain)
 
-    models_dir = project_root / 'models' / args.domain
+    models_dir = MODELS_DIR / args.domain
     if args.output is not None:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)

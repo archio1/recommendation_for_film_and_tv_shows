@@ -120,7 +120,7 @@ class _FakeTMDBClient:
         self._popularity = popularity
 
     def search_multi(self, query, limit=10):
-        from universal_search import UniversalMediaItem
+        from recommendation_system.models.gnn.universal_search import UniversalMediaItem
 
         return [
             UniversalMediaItem(

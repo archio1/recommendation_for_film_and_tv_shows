@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from universal_search import HotCache, UniversalMediaItem
+from recommendation_system.models.gnn.universal_search import HotCache, UniversalMediaItem
 
 
 def _item(

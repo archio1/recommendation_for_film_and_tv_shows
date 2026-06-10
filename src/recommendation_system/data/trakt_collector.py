@@ -4,17 +4,17 @@ trakt_collector.py — Multi-phase TV show dataset builder from trakt.tv API
 Collects TV show metadata and user-item interactions for the recommendation system.
 Designed for multi-day collection with safe shutdown/resume via SQLite checkpoints.
 
-Usage:
-    python trakt_collector.py                     # run all phases (auto-resume)
-    python trakt_collector.py --phase discover    # only phase 1
-    python trakt_collector.py --phase enrich      # only phase 2
-    python trakt_collector.py --phase network     # only phase 2.5 (follower crawl)
-    python trakt_collector.py --phase users       # only phase 3
-    python trakt_collector.py --phase export      # only phase 4
-    python trakt_collector.py --max-shows 5000    # limit discovered shows
-    python trakt_collector.py --max-users 80000   # limit users to collect
-    python trakt_collector.py --comment-pages 2   # comment pages per show
-    python trakt_collector.py --reset-phase users # reset a phase to re-run it
+Usage (m = python -m recommendation_system.data.trakt_collector):
+    m                     # run all phases (auto-resume)
+    m --phase discover    # only phase 1
+    m --phase enrich      # only phase 2
+    m --phase network     # only phase 2.5 (follower crawl)
+    m --phase users       # only phase 3
+    m --phase export      # only phase 4
+    m --max-shows 5000    # limit discovered shows
+    m --max-users 80000   # limit users to collect
+    m --comment-pages 2   # comment pages per show
+    m --reset-phase users # reset a phase to re-run it
 """
 
 import argparse
@@ -33,6 +33,8 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+
+from recommendation_system.paths import ENV_FILE, RAW_DIR
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -796,8 +798,7 @@ class TraktCollector:
         logger.info("PHASE 4: Export to CSV")
         logger.info("=" * 60)
 
-        project_root = Path(__file__).resolve().parents[3]
-        raw_dir = project_root / "data" / "raw"
+        raw_dir = RAW_DIR
         raw_dir.mkdir(parents=True, exist_ok=True)
 
         # --- Export show metadata ---
@@ -894,8 +895,7 @@ def main():
     args = parser.parse_args()
 
     # Load .env
-    project_root = Path(__file__).resolve().parents[3]
-    load_dotenv(project_root / ".env")
+    load_dotenv(ENV_FILE)
 
     client_id = os.getenv("TRAKT_CLIENT_ID")
     if not client_id:

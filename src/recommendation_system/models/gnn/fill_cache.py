@@ -1,16 +1,14 @@
 import os
-from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
 
-from bilingual_utils import ScalableMovieIntelligence
+from recommendation_system.models.gnn.bilingual_utils import ScalableMovieIntelligence
+from recommendation_system.paths import ENV_FILE, PROCESSED_DIR
 
-CURRENT_FILE = Path(__file__).resolve()
-PROJECT_ROOT = CURRENT_FILE.parents[4]
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "items_metadata_final.parquet"
+DATA_PATH = PROCESSED_DIR / "items_metadata_final.parquet"
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(ENV_FILE)
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 

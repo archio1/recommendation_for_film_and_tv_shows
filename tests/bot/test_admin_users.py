@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from bot.session_store import SessionStore
+from recommendation_system.models.gnn.bot.session_store import SessionStore
 
 
 @pytest.fixture

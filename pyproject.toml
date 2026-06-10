@@ -61,9 +61,10 @@ packages = ["src/recommendation_system"]
 #select = ["E", "F", "W", "I"]
 
 [tool.pytest.ini_options]
-minversion = "6.0"
+minversion = "7.0"
 addopts = "-ra"
 testpaths = ["tests"]
+pythonpath = ["src"]
 markers = [
     "slow: tests that load real SBERT or hit external services (run with -m slow)",
     "needs_real_models: tests that require trained checkpoints + parquet on disk",

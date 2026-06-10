@@ -25,15 +25,11 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
-try:
-    from .compute_embeddings import build_text_for_embedding
-    from .faiss_bridge import TV_OFFSET, FaissCatalog
-except ImportError:
-    from compute_embeddings import build_text_for_embedding
-    from faiss_bridge import TV_OFFSET, FaissCatalog
+from recommendation_system.models.gnn.compute_embeddings import build_text_for_embedding
+from recommendation_system.models.gnn.faiss_bridge import TV_OFFSET, FaissCatalog
 
 if TYPE_CHECKING:
-    from universal_search import (
+    from recommendation_system.models.gnn.universal_search import (
         HotCache,
         TMDBLiveClient,
         UniversalMediaItem,

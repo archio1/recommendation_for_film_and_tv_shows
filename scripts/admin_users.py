@@ -23,20 +23,16 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src" / "recommendation_system" / "models" / "gnn"))
+from recommendation_system.models.gnn.bot.session_store import SessionStore
+from recommendation_system.paths import CACHE_DIR, MOVIES_DIR, TV_DIR
 
-from bot.session_store import SessionStore  # noqa: E402
-
-DATA_DIR = PROJECT_ROOT / "data" / "processed"
-SESSION_DB = DATA_DIR / "cache" / "user_sessions.db"
-MOVIES_PARQUET = DATA_DIR / "movies" / "items_metadata_final.parquet"
-TV_PARQUET = DATA_DIR / "tv" / "items_metadata_final.parquet"
+SESSION_DB = CACHE_DIR / "user_sessions.db"
+MOVIES_PARQUET = MOVIES_DIR / "items_metadata_final.parquet"
+TV_PARQUET = TV_DIR / "items_metadata_final.parquet"
 
 
 # ---------------------------------------------------------------------------

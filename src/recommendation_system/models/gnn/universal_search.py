@@ -26,7 +26,7 @@ try:
 except ImportError:
     HAS_REQUESTS = False
 
-from title_normalizer import normalize_for_search
+from recommendation_system.models.gnn.title_normalizer import normalize_for_search
 
 logger = logging.getLogger(__name__)
 

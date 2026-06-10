@@ -17,7 +17,11 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from universal_search import HotCache, UniversalMediaItem, UniversalSearchEngine
+from recommendation_system.models.gnn.universal_search import (
+    HotCache,
+    UniversalMediaItem,
+    UniversalSearchEngine,
+)
 
 
 def _trilingual_metadata() -> pd.DataFrame:

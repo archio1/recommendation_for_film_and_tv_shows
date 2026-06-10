@@ -13,7 +13,6 @@ no longer have to import GUI code.
 from __future__ import annotations
 
 import json
-import sys
 import traceback
 from pathlib import Path
 
@@ -22,12 +21,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-# Mirror the sibling-import pattern used by trainer.py / check_similarity.py:
-# put the gnn/ directory on sys.path so `from lightgcn import LightGCN` works
-# both when run as a script and when imported as a package.
-sys.path.append(str(Path(__file__).parent))
-
-from lightgcn import LightGCN  # noqa: E402
+from recommendation_system.models.gnn.lightgcn import LightGCN
 
 
 STOP_WORDS = {'the', 'a', 'an', 'in', 'of', 'and', 'to', 'for', 'my', 'is', 'on'}

@@ -12,6 +12,8 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
+from recommendation_system.paths import PROCESSED_DIR
+
 # Жанры, которые мы ожидаем увидеть
 VALID_GENRES: Set[str] = {
     "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
@@ -122,8 +124,7 @@ class DatasetValidator:
 
 def main():
     # Путь к обработанным данным
-    processed_dir = Path(__file__).resolve().parents[3] / 'data' / 'processed'
-    validator = DatasetValidator(processed_dir)
+    validator = DatasetValidator(PROCESSED_DIR)
     sys.exit(0 if validator.run() else 1)
 
 if __name__ == "__main__":

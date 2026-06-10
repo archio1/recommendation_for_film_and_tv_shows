@@ -19,13 +19,17 @@ What we check (in DS terms — see plan):
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from recommendation_system.paths import (
+    MOVIES_CHECKPOINT,
+    MOVIES_DIR,
+    TV_CHECKPOINT,
+    TV_DIR,
+)
 
 # Stable, well-known tmdb_ids that should always be in the trained graph.
 # Movie ids are raw; TV ids carry the +TV_OFFSET (10_000_000) baked in.
@@ -42,13 +46,13 @@ FRIENDS_TMDB = 10_001_668
     [
         (
             "movies",
-            PROJECT_ROOT / "models" / "movies" / "lightgcn_movies_best_v4.pt",
-            PROJECT_ROOT / "data" / "processed" / "movies" / "id_mapping.json",
+            MOVIES_CHECKPOINT,
+            MOVIES_DIR / "id_mapping.json",
         ),
         (
             "tv",
-            PROJECT_ROOT / "models" / "tv" / "lightgcn_tv_best_v4.pt",
-            PROJECT_ROOT / "data" / "processed" / "tv" / "id_mapping.json",
+            TV_CHECKPOINT,
+            TV_DIR / "id_mapping.json",
         ),
     ],
 )

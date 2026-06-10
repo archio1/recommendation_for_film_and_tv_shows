@@ -15,9 +15,9 @@ from recommendation_system.models.gnn.gui.domain_stats import (
 )
 from recommendation_system.models.gnn.gui.theme import (
     COLORS,
-    PROJECT_ROOT,
     secondary_button,
 )
+from recommendation_system.paths import PROJECT_ROOT
 
 if TYPE_CHECKING:
     from recommendation_system.models.gnn.gui.app import TrainerGuiApp

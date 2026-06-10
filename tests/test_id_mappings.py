@@ -19,10 +19,7 @@ import pandas as pd
 import pytest
 
 from recommendation_system.models.gnn.faiss_bridge import TV_OFFSET
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MOVIES_DIR = PROJECT_ROOT / "data" / "processed" / "movies"
-TV_DIR = PROJECT_ROOT / "data" / "processed" / "tv"
+from recommendation_system.paths import MOVIES_DIR, TV_DIR
 
 REQUIRED_COLUMNS = {
     "tmdb_id", "item_id", "title", "type", "genres",

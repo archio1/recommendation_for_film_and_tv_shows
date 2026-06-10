@@ -1,16 +1,13 @@
 import torch
 import pandas as pd
 import numpy as np
-from pathlib import Path
-import sys
 
-sys.path.append(str(Path(__file__).parent))
-from lightgcn import LightGCN
+from recommendation_system.models.gnn.lightgcn import LightGCN
+from recommendation_system.paths import MODELS_DIR, PROCESSED_DIR
 
 # --- НАСТРОЙКИ ---
-BASE_DIR = Path(__file__).resolve().parents[4]
-DATA_DIR = BASE_DIR / 'data' / 'processed'
-MODEL_PATH = BASE_DIR / 'models' / 'lightgcn_best_v4.pt'
+DATA_DIR = PROCESSED_DIR
+MODEL_PATH = MODELS_DIR / 'lightgcn_best_v4.pt'
 
 
 def prepare_content_features_for_inference(metadata, device, expected_num_genres):

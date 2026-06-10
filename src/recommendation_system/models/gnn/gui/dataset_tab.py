@@ -21,11 +21,11 @@ from recommendation_system.models.gnn.gui.common import (
 from recommendation_system.models.gnn.gui.theme import (
     COLORS,
     GAP_M,
-    PROJECT_ROOT,
     neutral_button,
     primary_button,
     secondary_button,
 )
+from recommendation_system.paths import GENRE_MAP_PATH, PROJECT_ROOT
 
 if TYPE_CHECKING:
     from recommendation_system.models.gnn.gui.app import TrainerGuiApp
@@ -903,10 +903,7 @@ class DatasetTab:
         from recommendation_system.data import make_dataset as md
         md.logger.addHandler(gui_handler)
         try:
-            config_path = (
-                PROJECT_ROOT / "src" / "recommendation_system"
-                / "models" / "gnn" / "config" / "genre_map.json"
-            )
+            config_path = GENRE_MAP_PATH
             data_dir = PROJECT_ROOT / "data"
 
             built: list[str] = []

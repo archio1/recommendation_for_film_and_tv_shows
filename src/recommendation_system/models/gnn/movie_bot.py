@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -26,9 +25,9 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
-from bilingual_utils import GENRE_EN_TO_RU, GENRE_EN_TO_UK
-from bot.i18n import T
-from bot.keyboards import (
+from recommendation_system.models.gnn.bilingual_utils import GENRE_EN_TO_RU, GENRE_EN_TO_UK
+from recommendation_system.models.gnn.bot.i18n import T
+from recommendation_system.models.gnn.bot.keyboards import (
     BTN_CLEAR_ALL,
     BTN_LIST_ALL,
     BTN_MOVIES_ALL,
@@ -37,13 +36,13 @@ from bot.keyboards import (
     BTN_TV_ALL,
     main_reply_kb,
 )
-from bot.search import get_query, merged_search, store_query
-from bot.session_store import SessionStore
-from cold_start import ColdStartIngestor
-from dual_domain_engine import DualDomainEngine
-from faiss_bridge import TV_OFFSET, FaissCatalog
-from inference_engine import InferenceEngine
-from universal_search import (
+from recommendation_system.models.gnn.bot.search import get_query, merged_search, store_query
+from recommendation_system.models.gnn.bot.session_store import SessionStore
+from recommendation_system.models.gnn.cold_start import ColdStartIngestor
+from recommendation_system.models.gnn.dual_domain_engine import DualDomainEngine
+from recommendation_system.models.gnn.faiss_bridge import TV_OFFSET, FaissCatalog
+from recommendation_system.models.gnn.inference_engine import InferenceEngine
+from recommendation_system.models.gnn.universal_search import (
     TrendingUpdater,
     UniversalMediaItem,
     UniversalSearchEngine,
@@ -54,22 +53,20 @@ from universal_search import (
 # Paths & config
 # ---------------------------------------------------------------------------
 
-load_dotenv()
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+from recommendation_system.paths import (
+    CACHE_DIR,
+    ENV_FILE,
+    FAISS_INDEX,
+    FAISS_META,
+    MOVIES_CHECKPOINT,
+    MOVIES_DIR,
+    TV_CHECKPOINT,
+    TV_DIR,
+)
+
+load_dotenv(ENV_FILE)
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-
-DATA_DIR = PROJECT_ROOT / "data" / "processed"
-MOVIES_DIR = DATA_DIR / "movies"
-TV_DIR = DATA_DIR / "tv"
-CACHE_DIR = DATA_DIR / "cache"
-
-FAISS_DIR = PROJECT_ROOT / "src" / "recommendation_system" / "faiss_index"
-FAISS_INDEX = FAISS_DIR / "catalog.faiss"
-FAISS_META = FAISS_DIR / "catalog_meta.json"
-
-MOVIES_CHECKPOINT = PROJECT_ROOT / "models" / "movies" / "lightgcn_movies_best_v4.pt"
-TV_CHECKPOINT = PROJECT_ROOT / "models" / "tv" / "lightgcn_tv_best_v4.pt"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

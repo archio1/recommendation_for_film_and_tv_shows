@@ -25,25 +25,21 @@ import argparse
 import json
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src" / "recommendation_system" / "models" / "gnn"))
-
-from src.recommendation_system.models.gnn.bilingual_utils import TMDBClient, TMDBTranslationCache  # noqa: E402
+from recommendation_system.models.gnn.bilingual_utils import TMDBClient, TMDBTranslationCache
+from recommendation_system.paths import CACHE_DIR, ENV_FILE, PROCESSED_DIR
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
 )
 logger = logging.getLogger("backfill_uk")
 
-DATA_DIR = PROJECT_ROOT / "data" / "processed"
-CACHE_DIR = DATA_DIR / "cache"
+DATA_DIR = PROCESSED_DIR
 CHECKPOINT_EVERY = 500
 
 
@@ -97,7 +93,7 @@ def backfill(domain: str, resume: bool, limit: int | None) -> None:
     # Pick rows that still need fetching: missing uk title AND not already
     # marked done in checkpoint. tmdb_id may live above TV_OFFSET in TV
     # parquet, but TMDB itself doesn't know about the offset — strip it.
-    from src.recommendation_system.models.gnn.faiss_bridge import TV_OFFSET  # local import: avoid heavy deps unless run
+    from recommendation_system.models.gnn.faiss_bridge import TV_OFFSET  # local import: avoid heavy deps unless run
     rows = df[df["tmdb_id"].notna()].copy()
     rows["raw_tmdb_id"] = rows["tmdb_id"].astype(int).map(
         lambda x: x - TV_OFFSET if x >= TV_OFFSET else x
@@ -182,7 +178,7 @@ def main() -> None:
         help="Process at most N rows (debugging / first-pass smoke).",
     )
     args = parser.parse_args()
-    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(ENV_FILE)
     backfill(args.domain, args.resume, args.limit)
 
 

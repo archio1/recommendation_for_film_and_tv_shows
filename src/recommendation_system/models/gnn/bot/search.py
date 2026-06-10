@@ -22,7 +22,10 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from universal_search import UniversalMediaItem, UniversalSearchEngine
+    from recommendation_system.models.gnn.universal_search import (
+        UniversalMediaItem,
+        UniversalSearchEngine,
+    )
 
 
 _TTL_SECONDS = 10 * 60

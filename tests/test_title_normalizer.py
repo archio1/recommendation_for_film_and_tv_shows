@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from title_normalizer import (
+from recommendation_system.models.gnn.title_normalizer import (
     EN_DIGIT_TO_WORD,
     RU_DIGIT_TO_WORD,
     UK_DIGIT_TO_WORD,

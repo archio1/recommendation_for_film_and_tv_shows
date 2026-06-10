@@ -7,8 +7,8 @@
 - `make_dataset_dir`     — пишет interactions/items parquet + id_mapping.json в указанную папку.
 - `make_model_dir`       — кладёт фейковый `*.pt` (+ опц. sidecar `*.json`) в указанную папку.
 
-`tests/conftest.py` уже кладёт `src/` на sys.path, поэтому
-`from recommendation_system.models.gnn.gui import ...` работает.
+Пакет импортируется через editable install / `pythonpath = ["src"]` в pyproject,
+поэтому `from recommendation_system.models.gnn.gui import ...` работает.
 """
 
 from __future__ import annotations

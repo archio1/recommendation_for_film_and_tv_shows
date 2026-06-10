@@ -27,6 +27,8 @@ import requests
 import unicodedata
 import re
 
+from recommendation_system.paths import DATA_DIR, GENRE_MAP_PATH, PROJECT_ROOT
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1366,13 +1368,9 @@ def main():
     )
     args = parser.parse_args()
 
-    current_file = Path(__file__).resolve()
-    project_root = current_file.parents[3]
-    data_dir = project_root / "data"
-    config_path = (
-            project_root / "src" / "recommendation_system"
-            / "models" / "gnn" / "config" / "genre_map.json"
-    )
+    project_root = PROJECT_ROOT
+    data_dir = DATA_DIR
+    config_path = GENRE_MAP_PATH
 
     logger.info(f"Project Root: {project_root}")
     logger.info(f"Data Dir:     {data_dir}")
