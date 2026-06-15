@@ -47,7 +47,7 @@ required/optional status per source are specified in the sections below.
 
 GroupLens MovieLens 32M provides the core user–item matrix for the movie model.
 Without it, `build_movie_dataset()` fails while reading `ratings.csv`
-(see `make_dataset.py:312-327` — read with no `exists()` guard).
+(see [`make_dataset.py:load_data`](../src/recommendation_system/data/make_dataset.py) — read with no `exists()` guard).
 
 **How to install:**
 
@@ -85,7 +85,7 @@ place the CSV at `data/raw/TMDB_movie_dataset_v11.csv`.
   `keywords`, `popularity`, `vote_count`, `vote_average`.
 - GUI → Dataset tab → Sources → TMDB CSV: the indicator must be a green ✓.
 
-Reference: `make_dataset.py:clean_tmdb_movies` (line 586+).
+Reference: [`make_dataset.py:clean_tmdb_movies`](../src/recommendation_system/data/make_dataset.py).
 
 ---
 
@@ -160,7 +160,7 @@ DataFrame.
 
 ##### `trakt_shows.csv`
 
-Reference: `make_dataset.py:load_trakt_metadata` (lines 492–551).
+Reference: [`make_dataset.py:load_trakt_metadata`](../src/recommendation_system/data/make_dataset.py).
 
 | Column | Type | Required? | Notes |
 |---|---|---|---|
@@ -184,12 +184,12 @@ tmdb_id,title,year,genres,overview,language,vote_average,vote_count,popularity
 
 ##### `trakt_interactions.csv`
 
-Reference: `make_dataset.py:load_trakt_interactions` (lines 553–580).
+Reference: [`make_dataset.py:load_trakt_interactions`](../src/recommendation_system/data/make_dataset.py).
 
 | Column | Type | Required? | Notes |
 |---|---|---|---|
 | `user_id` | uint32 | **Required** | arbitrary non-negative ints; uniqueness not required (one row per rating) |
-| `tmdb_id` | uint32 | **Required** | **without** +10M offset — added in the pipeline (line 573) |
+| `tmdb_id` | uint32 | **Required** | **without** +10M offset — added in the pipeline |
 | `rating` | float32 | **Required** | 0.5–5.0 scale (MovieLens-compatible) |
 | `timestamp` | uint32 | **Required** | unix epoch in seconds |
 
@@ -201,7 +201,8 @@ user_id,tmdb_id,rating,timestamp
 2,1399,4.0,1604190000
 ```
 
-Rows whose `tmdb_id` is absent from `trakt_shows.csv` are dropped on join (line 577).
+Rows whose `tmdb_id` is absent from `trakt_shows.csv` are dropped on join
+(see [`make_dataset.py:load_trakt_interactions`](../src/recommendation_system/data/make_dataset.py)).
 
 ---
 
@@ -226,9 +227,11 @@ of MovieLens / Trakt.
      folder path.
 
 If the files are absent, the pipeline does a graceful fallback (it simply skips
-Amazon, `make_dataset.py:357-359`). The source icon shows an amber ⚠ (optional missing).
+Amazon, [`make_dataset.py:load_amazon_interactions`](../src/recommendation_system/data/make_dataset.py)).
+The source icon shows an amber ⚠ (optional missing).
 
-ASIN → tmdb_id mapping is done by cleaned title (see `load_amazon_interactions`, line 347+).
+ASIN → tmdb_id mapping is done by cleaned title (see
+[`make_dataset.py:load_amazon_interactions`](../src/recommendation_system/data/make_dataset.py)).
 
 ---
 
