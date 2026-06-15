@@ -208,6 +208,7 @@ cleanly** when those are absent, so a fresh checkout stays green.
 - [x] Popularity de-bias for the movie ranker
 - [ ] Periodic retrain pipeline (`scripts/retrain.py`, see `spec/retrain-pipeline.md`)
 - [ ] Taste-relative de-bias (penalize popularity relative to user profile)
+- [ ] Automated raw-dataset download scripts (MovieLens / TMDB)
 
 ---
 
