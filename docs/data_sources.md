@@ -19,9 +19,9 @@ document.
 | Source | Model | Required? | Size | Where to get it |
 |---|---|---|---|---|
 | MovieLens 32M | movies | **Required** | ~1.1 GB | [grouplens.org/datasets/movielens/32m](https://grouplens.org/datasets/movielens/32m/) |
-| TMDB metadata v11 | movies | Optional | ~400 MB | Kaggle: "TMDB Movies Dataset 2024" |
-| Trakt shows CSV | tv | **Required** | ~5 MB | `trakt_collector.py` (self-collected, ~2 days) or a third-party CSV |
-| Trakt interactions CSV | tv | **Required** | ~80 MB | same |
+| TMDB metadata v11 | movies | Optional | ~400 MB | [Kaggle: TMDB Movies Dataset (930K)](https://www.kaggle.com/datasets/asaniczka/tmdb-movies-dataset-2023-930k-movies) |
+| Trakt shows CSV | tv | **Required** | ~1.7 MB | [Release `data-v1`](https://github.com/archio1/recommendation_for_film_and_tv_shows/releases/tag/data-v1) (prebuilt) · or self-collect / third-party CSV |
+| Trakt interactions CSV | tv | **Required** | ~25 MB | same |
 | Amazon Reviews 2023 | movies/tv | Optional | ~100 GB | [amazon-reviews-2023.github.io](https://amazon-reviews-2023.github.io/) |
 
 ### Can I use my own / other datasets?
@@ -32,7 +32,7 @@ document.
 - **TV — yes, any CSV that matches the schema contract.** You don't have to run the
   Trakt crawler — a Kaggle dump, an IMDb export, or any other TV ratings source
   works as long as `trakt_shows.csv` and `trakt_interactions.csv` follow the columns
-  and types in [the contract below](#b-plug-in-an-existing-csv--schema-contract).
+  and types in [the contract below](#c-plug-in-an-existing-csv--schema-contract).
 - **TMDB metadata / Amazon Reviews — optional enrichment.** Drop them in to improve
   metadata/coverage, or leave them out; the pipeline degrades gracefully.
 
@@ -75,8 +75,15 @@ Without it, `build_movie_dataset()` fails while reading `ratings.csv`
 Enriches movie metadata (overview, keywords, popularity, vote_count) and improves
 genre classification. The movie pipeline works without it, just with leaner metadata.
 
-**How to install:** download from Kaggle (search "TMDB Movies Dataset" v11) →
-`data/raw/TMDB_movie_dataset_v11.csv`.
+**How to install:** download from Kaggle —
+[TMDB Movies Dataset 2023 (930K movies)](https://www.kaggle.com/datasets/asaniczka/tmdb-movies-dataset-2023-930k-movies) →
+place the CSV at `data/raw/TMDB_movie_dataset_v11.csv`.
+
+**Verify you got the right file:**
+- Filename: `TMDB_movie_dataset_v11.csv` (~1.2 GB, ~930K rows).
+- Has the columns the pipeline reads: `id`, `title`, `overview`, `genres`,
+  `keywords`, `popularity`, `vote_count`, `vote_average`.
+- GUI → Dataset tab → Sources → TMDB CSV: the indicator must be a green ✓.
 
 Reference: `make_dataset.py:clean_tmdb_movies` (line 586+).
 
@@ -93,9 +100,39 @@ was crawled directly from the Trakt.tv API. The full collection yielded
 **~5,020 shows × ~83K users × ~1.95M ratings** and fixed the historical
 movie/TV imbalance (previously ~99% / ~1%).
 
-Two ways to obtain the CSVs:
+Three ways to obtain the CSVs:
 
-#### (a) Self-collect via `trakt_collector.py` (≈2 days)
+#### (a) Download the prebuilt CSVs — **recommended**
+
+The exact dataset the project was trained on is published as GitHub Release
+[`data-v1`](https://github.com/archio1/recommendation_for_film_and_tv_shows/releases/tag/data-v1).
+Download both files into `data/raw/`:
+
+- [`trakt_shows.csv`](https://github.com/archio1/recommendation_for_film_and_tv_shows/releases/download/data-v1/trakt_shows.csv) (~1.7 MB)
+- [`trakt_interactions.csv`](https://github.com/archio1/recommendation_for_film_and_tv_shows/releases/download/data-v1/trakt_interactions.csv) (~25 MB)
+
+**Verify the download (SHA-256):**
+
+| File | SHA-256 |
+|---|---|
+| `trakt_shows.csv` | `bbaa413e25dd057414bb4983e3760e2734315ae6323bd98e7be517971d02010e` |
+| `trakt_interactions.csv` | `c28c7b50f15e4cd571559317ec30a1f254f7a719a73044531a7823c2b3da0d6c` |
+
+```bash
+# from data/raw/ — should print the hashes above
+sha256sum trakt_shows.csv trakt_interactions.csv          # Linux/macOS
+certutil -hashfile trakt_shows.csv SHA256                 # Windows
+```
+
+#### (b) Self-collect via `trakt_collector.py` (≈2 days)
+
+**Prerequisite — a Trakt API client id.** Create a Trakt account → Settings →
+[Developer → Your API Apps](https://trakt.tv/oauth/applications) → "New Application",
+then put the generated **Client ID** in your `.env` at the repo root:
+
+```bash
+TRAKT_CLIENT_ID=...        # required; recsys-trakt aborts without it
+```
 
 ```bash
 recsys-trakt
@@ -109,9 +146,10 @@ Output — two files in `data/raw/`:
 - `trakt_shows.csv`
 - `trakt_interactions.csv`
 
-This is the recommended path for reproducibility.
+Use this path to reproduce the collection from scratch; for a quick start prefer
+the prebuilt download in (a).
 
-#### (b) Plug in an existing CSV — schema contract
+#### (c) Plug in an existing CSV — schema contract
 
 If you already have a TV dataset (Kaggle, an IMDb dump, someone else's Trakt
 snapshot), attach it via GUI → Dataset tab → "Sources" expander → file picker on
@@ -181,7 +219,11 @@ of MovieLens / Trakt.
      ├── meta_Movies_and_TV.jsonl     (~3 GB)
      └── Movies_and_TV.jsonl          (~90 GB)
    ```
-3. GUI → Dataset tab → "Sources" expander → set the "Amazon dir" field to the folder path.
+3. Point the pipeline at the folder:
+   - **CLI:** `recsys-dataset --domain all --amazon-dir <amazon_dir>` (omit the flag
+     to skip Amazon).
+   - **GUI:** Dataset tab → "Sources" expander → set the "Amazon dir" field to the
+     folder path.
 
 If the files are absent, the pipeline does a graceful fallback (it simply skips
 Amazon, `make_dataset.py:357-359`). The source icon shows an amber ⚠ (optional missing).

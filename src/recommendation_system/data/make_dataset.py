@@ -1366,6 +1366,11 @@ def main():
         '--domain', choices=['movies', 'tv', 'all'], default='all',
         help="Which dataset to build (default: all)"
     )
+    parser.add_argument(
+        '--amazon-dir', type=Path, default=None,
+        help="Path to the Amazon Reviews 2023 folder (with meta_Movies_and_TV.jsonl "
+             "+ Movies_and_TV.jsonl). If omitted, Amazon interactions are skipped."
+    )
     args = parser.parse_args()
 
     project_root = PROJECT_ROOT
@@ -1398,11 +1403,14 @@ def main():
         max_interactions=15_000_000,
     )
 
+    if args.amazon_dir is not None:
+        logger.info(f"Amazon dir:   {args.amazon_dir}")
+
     ok = True
     if args.domain in ('movies', 'all'):
-        ok &= processor.build_movie_dataset()
+        ok &= processor.build_movie_dataset(amazon_dir=args.amazon_dir)
     if args.domain in ('tv', 'all'):
-        ok &= processor.build_tv_dataset()
+        ok &= processor.build_tv_dataset(amazon_dir=args.amazon_dir)
 
     exit(0 if ok else 1)
 

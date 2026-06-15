@@ -47,11 +47,13 @@ pip install -e .        # or: uv sync — also installs the recsys-* commands
 
 # 1. Raw data → data/raw/
 #    movies: MovieLens 32M — https://grouplens.org/datasets/movielens/32m/
-#    tv:     trakt_shows.csv + trakt_interactions.csv — see docs/data_sources.md
-#            (self-collecting them takes days; ask the author for the CSVs)
+#    tv:     trakt_shows.csv + trakt_interactions.csv → data/raw/
+#            prebuilt download: github releases tag data-v1 (see docs/data_sources.md)
 
 # 2. Build the datasets (minutes)
 recsys-dataset --domain all
+#    optional: also fold in Amazon Reviews 2023 (see docs/data_sources.md)
+#    recsys-dataset --domain all --amazon-dir data/raw/amazon
 
 # 3. Train both models (tv trains anywhere; the movies graph is large —
 #    use a big-memory GPU or Colab, see docs/setup_from_scratch.md)

@@ -31,6 +31,7 @@ dependencies = [
     "scipy",
     "numpy",
     "pandas",
+    "pyarrow>=15",  # parquet engine for pandas to_parquet/read_parquet (dataset pipeline)
     # bot / GUI / IO
     "aiogram>=3.25",
     "flet>=0.28",
