@@ -83,13 +83,20 @@ The admin GUI is documented in **[docs/trainer_gui_guide.md](docs/trainer_gui_gu
 >
 > **RTX 50-series (Blackwell, `sm_120`):** torch 2.6/cu124 ships no `sm_120`
 > kernels, so training crashes with `CUDA error: no kernel image is available for
-> execution on the device`. Use the cu128 build of torch 2.7 instead. The project
-> code only uses the pure-Python parts of PyTorch Geometric (`MessagePassing`,
-> `utils`, `data.Data`), so the ABI-pinned PyG extensions can simply be removed —
+> execution on the device`. Use the cu128 build of torch 2.7 instead —
 > `torch-geometric` itself stays at 2.7 and needs no upgrade:
 > ```bash
-> uv pip uninstall pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv
 > uv pip install torch==2.7.* --index-url https://download.pytorch.org/whl/cu128
+> ```
+> The compiled PyG extensions (`pyg_lib`, `torch_scatter`, `torch_sparse`,
+> `torch_cluster`, `torch_spline_conv`) are built against a specific torch/CUDA
+> combo, so they won't match the new torch. This is harmless: the project uses
+> only the pure-Python parts of PyG (`MessagePassing`, `utils`, `data.Data`),
+> which fall back to native torch ops — PyG auto-disables any incompatible
+> extension on import. You can leave them in place, or remove them for a clean
+> install with no warnings:
+> ```bash
+> uv pip uninstall pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv
 > ```
 > Verify with `python -c "import torch; print(torch.cuda.get_arch_list())"` (must
 > list `sm_120`). No GPU yet? Train on CPU meanwhile: `recsys-train --device cpu`
