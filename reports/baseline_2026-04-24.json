@@ -1,0 +1,1874 @@
+{
+  "meta": {
+    "started_at": "2026-04-24T15:06:48Z",
+    "path": "C:\\PycharmProjects\\PythonProject\\recommendation_for_film_and_tv_shows\\reports\\quality_trajectory_20260424_150648.json",
+    "finished_at": "2026-04-24T15:08:17Z"
+  },
+  "entries": [
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_scifi_5",
+      "metrics": {
+        "n": 1,
+        "recs_count": 10,
+        "genre_overlap_pct": 90.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 1.0,
+        "unique_genres_in_recs": 7,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Dark Knight",
+          "The Matrix",
+          "Fight Club",
+          "The Lord of the Rings: The Return of the King",
+          "The Lord of the Rings: The Two Towers",
+          "Guardians of the Galaxy",
+          "Ant-Man",
+          "The Matrix Resurrections",
+          "Uncharted",
+          "TRON: Legacy"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_scifi_5",
+      "metrics": {
+        "n": 2,
+        "recs_count": 10,
+        "genre_overlap_pct": 90.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 1.0,
+        "unique_genres_in_recs": 7,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Dark Knight",
+          "The Matrix",
+          "Fight Club",
+          "The Lord of the Rings: The Return of the King",
+          "The Lord of the Rings: The Two Towers",
+          "Guardians of the Galaxy",
+          "Fantastic Four",
+          "The Matrix Resurrections",
+          "Ant-Man",
+          "Mad Max: Fury Road"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_scifi_5",
+      "metrics": {
+        "n": 3,
+        "recs_count": 10,
+        "genre_overlap_pct": 90.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.8,
+        "unique_genres_in_recs": 8,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "Arrival",
+          "Fast Color",
+          "Parasite",
+          "Predator",
+          "Predators",
+          "Star Trek Beyond",
+          "The Day the Earth Stood Still",
+          "The Dark Knight",
+          "The Matrix",
+          "Guardians of the Galaxy"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_scifi_5",
+      "metrics": {
+        "n": 4,
+        "recs_count": 10,
+        "genre_overlap_pct": 70.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 1.0,
+        "unique_genres_in_recs": 8,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "Forrest Gump",
+          "The Shawshank Redemption",
+          "The Godfather",
+          "The Empire Strikes Back",
+          "Predator",
+          "Predators",
+          "Star Trek Beyond",
+          "The Matrix Resurrections",
+          "The Dark Knight",
+          "Guardians of the Galaxy"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_scifi_5",
+      "metrics": {
+        "n": 5,
+        "recs_count": 10,
+        "genre_overlap_pct": 60.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.9,
+        "unique_genres_in_recs": 8,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "Forrest Gump",
+          "The Shawshank Redemption",
+          "The Godfather",
+          "Predator",
+          "Predators",
+          "Star Trek Beyond",
+          "The Dark Knight",
+          "Guardians of the Galaxy",
+          "Ready Player One",
+          "Stalker"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_action_5",
+      "metrics": {
+        "n": 1,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.6,
+        "unique_genres_in_recs": 5,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "Nightcrawler",
+          "Sicario",
+          "Snowpiercer",
+          "Dredd",
+          "The Equalizer",
+          "War",
+          "The Foreigner",
+          "The Gray Man",
+          "Hummingbird",
+          "The Misfits"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_action_5",
+      "metrics": {
+        "n": 2,
+        "recs_count": 10,
+        "genre_overlap_pct": 80.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.8,
+        "unique_genres_in_recs": 7,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "Interstellar",
+          "Django Unchained",
+          "The Shawshank Redemption",
+          "The Matrix",
+          "The Empire Strikes Back",
+          "John Wick: Chapter 2",
+          "The Dark Knight Rises",
+          "John Wick: Chapter 3 - Parabellum",
+          "Blitz",
+          "War"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_action_5",
+      "metrics": {
+        "n": 3,
+        "recs_count": 10,
+        "genre_overlap_pct": 80.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.8,
+        "unique_genres_in_recs": 8,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "Nightcrawler",
+          "Sicario",
+          "War",
+          "The Foreigner",
+          "Inception",
+          "Fight Club",
+          "The Dark Knight Rises",
+          "Batman Begins",
+          "WALL\u00b7E",
+          "The Departed"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_action_5",
+      "metrics": {
+        "n": 4,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.8,
+        "unique_genres_in_recs": 9,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Dark Knight Rises",
+          "Up",
+          "Iron Man 3",
+          "Iron Man 2",
+          "Avengers: Age of Ultron",
+          "Nightcrawler",
+          "War",
+          "The Foreigner",
+          "Inception",
+          "Batman Begins"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "movies_action_5",
+      "metrics": {
+        "n": 5,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.9,
+        "unique_genres_in_recs": 10,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Dark Knight Rises",
+          "Up",
+          "Iron Man 3",
+          "Iron Man 2",
+          "Nightcrawler",
+          "War",
+          "Inception",
+          "Batman Begins",
+          "X2",
+          "Hancock"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "tv_fantasy_5",
+      "metrics": {
+        "n": 1,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.5,
+        "unique_genres_in_recs": 6,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Lord of the Rings: The Rings of Power",
+          "The Witcher",
+          "The Last of Us",
+          "The Wheel of Time",
+          "Fallout",
+          "Merlin",
+          "Game of Thrones",
+          "Testament",
+          "Husk to Self",
+          "Motorvalley"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "tv_fantasy_5",
+      "metrics": {
+        "n": 2,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.4,
+        "unique_genres_in_recs": 6,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Lord of the Rings: The Rings of Power",
+          "The Witcher",
+          "See",
+          "A Knight of the Seven Kingdoms",
+          "Obi-Wan Kenobi",
+          "Merlin",
+          "Game of Thrones",
+          "Husk to Self",
+          "Testament",
+          "N\u00e9ro the Assassin"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "tv_fantasy_5",
+      "metrics": {
+        "n": 3,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.5,
+        "unique_genres_in_recs": 6,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Witcher",
+          "The Lord of the Rings: The Rings of Power",
+          "The Mandalorian",
+          "Merlin",
+          "N\u00e9ro the Assassin",
+          "Testament",
+          "Husk to Self",
+          "The Last of Us",
+          "Fallout",
+          "Motorvalley"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "tv_fantasy_5",
+      "metrics": {
+        "n": 4,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.4,
+        "unique_genres_in_recs": 7,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Witcher",
+          "The Lord of the Rings: The Rings of Power",
+          "Merlin",
+          "N\u00e9ro the Assassin",
+          "Testament",
+          "The Last of Us",
+          "Husk to Self",
+          "Motorvalley",
+          "The Expanse",
+          "Into the Darklands"
+        ]
+      }
+    },
+    {
+      "test": "quality_trajectory",
+      "scenario": "tv_fantasy_5",
+      "metrics": {
+        "n": 5,
+        "recs_count": 10,
+        "genre_overlap_pct": 100.0,
+        "keyword_overlap_pct": 0.0,
+        "popular_share": 0.4,
+        "unique_genres_in_recs": 8,
+        "liked_keyword_count": 0,
+        "rec_titles": [
+          "The Witcher",
+          "The Lord of the Rings: The Rings of Power",
+          "Merlin",
+          "N\u00e9ro the Assassin",
+          "The Last of Us",
+          "Testament",
+          "The Expanse",
+          "Into the Darklands",
+          "Midnight Mass",
+          "The Twilight Zone"
+        ]
+      }
+    },
+    {
+      "test": "golden_standard_movie",
+      "scenario": "3_lotr_trilogy_fantasy",
+      "metrics": {
+        "top_k": 20,
+        "must_contain": [
+          49051,
+          57158,
+          122917
+        ],
+        "found": [
+          49051,
+          57158,
+          122917
+        ],
+        "recall": 1.0,
+        "rec_titles": [
+          "The Matrix",
+          "Fight Club",
+          "The Shawshank Redemption",
+          "Memento",
+          "Gladiator",
+          "The Dark Knight",
+          "Forrest Gump",
+          "Inception",
+          "The Empire Strikes Back",
+          "Pulp Fiction",
+          "The Hobbit: The Battle of the Five Armies",
+          "The Hobbit: An Unexpected Journey",
+          "Prince of Persia: The Sands of Time",
+          "The Hobbit: The Desolation of Smaug",
+          "Pirates of the Caribbean: Dead Man's Chest",
+          "Legend",
+          "The Northman",
+          "Harry Potter and the Chamber of Secrets",
+          "The Sorcerer's Apprentice",
+          "Harry Potter and the Order of the Phoenix"
+        ]
+      }
+    },
+    {
+      "test": "golden_standard_movie",
+      "scenario": "marvel_3",
+      "metrics": {
+        "top_k": 20,
+        "must_contain": [
+          1771,
+          10195,
+          118340,
+          284054
+        ],
+        "found": [],
+        "recall": 0.0,
+        "rec_titles": [
+          "The Dark Knight Rises",
+          "Up",
+          "WALL\u00b7E",
+          "The Dark Knight",
+          "The Departed",
+          "Inception",
+          "Avatar",
+          "Iron Man 3",
+          "Iron Man 2",
+          "Avengers: Age of Ultron",
+          "Captain America: The Winter Soldier",
+          "Ant-Man",
+          "Avengers: Infinity War",
+          "Mad Max: Fury Road",
+          "X2",
+          "X-Men",
+          "Minority Report",
+          "Hancock",
+          "Batman Returns",
+          "Spider-Man 2"
+        ]
+      }
+    },
+    {
+      "test": "golden_standard_tv",
+      "scenario": "1_pure_fantasy_3",
+      "metrics": {
+        "top_k": 20,
+        "must_contain": [
+          10001399,
+          10087739
+        ],
+        "found": [
+          10001399
+        ],
+        "recall": 0.5,
+        "rec_titles": [
+          "The Lord of the Rings: The Rings of Power",
+          "The Witcher",
+          "See",
+          "A Knight of the Seven Kingdoms",
+          "Obi-Wan Kenobi",
+          "Star Wars: Andor",
+          "The Mandalorian",
+          "Fallout",
+          "The Sandman",
+          "Ahsoka",
+          "Merlin",
+          "Game of Thrones",
+          "Husk to Self",
+          "Testament",
+          "N\u00e9ro the Assassin",
+          "Motorvalley",
+          "Robin Hood",
+          "Wicked Game",
+          "Lord of the Flies",
+          "The Aetherion"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "1_john_wick_action",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.6,
+        "top_k": 10,
+        "rec_titles": [
+          "Nightcrawler",
+          "Sicario",
+          "Snowpiercer",
+          "Dredd",
+          "The Equalizer",
+          "War",
+          "The Foreigner",
+          "The Gray Man",
+          "Hummingbird",
+          "The Misfits"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "2_toy_story_plus_saw_mixed",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.7,
+        "top_k": 10,
+        "rec_titles": [
+          "Terminator 2: Judgment Day",
+          "The Silence of the Lambs",
+          "Braveheart",
+          "Schindler's List",
+          "Se7en",
+          "Toy Story 3",
+          "Toy Story 2",
+          "Tom and Jerry: Willy Wonka and the Chocolate Factory",
+          "The Boss Baby: Family Business",
+          "Hawaiian Vacation"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "3_lotr_trilogy_fantasy",
+      "metrics": {
+        "n": 1,
+        "popular_share": 1.0,
+        "top_k": 10,
+        "rec_titles": [
+          "The Matrix",
+          "Fight Club",
+          "The Shawshank Redemption",
+          "Gladiator",
+          "Memento",
+          "The Hobbit: An Unexpected Journey",
+          "The Lord of the Rings: The Two Towers",
+          "The Hobbit: The Desolation of Smaug",
+          "The Lord of the Rings: The Return of the King",
+          "The Hobbit: The Battle of the Five Armies"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "3_lotr_trilogy_fantasy",
+      "metrics": {
+        "n": 3,
+        "popular_share": 1.0,
+        "top_k": 10,
+        "rec_titles": [
+          "The Matrix",
+          "Fight Club",
+          "The Shawshank Redemption",
+          "Memento",
+          "Gladiator",
+          "The Hobbit: The Battle of the Five Armies",
+          "The Hobbit: An Unexpected Journey",
+          "Prince of Persia: The Sands of Time",
+          "The Hobbit: The Desolation of Smaug",
+          "Pirates of the Caribbean: Dead Man's Chest"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "4_diverse_5",
+      "metrics": {
+        "n": 1,
+        "popular_share": 1.0,
+        "top_k": 10,
+        "rec_titles": [
+          "The Dark Knight",
+          "The Matrix",
+          "Fight Club",
+          "The Lord of the Rings: The Return of the King",
+          "The Lord of the Rings: The Two Towers",
+          "Guardians of the Galaxy",
+          "Ant-Man",
+          "The Matrix Resurrections",
+          "Uncharted",
+          "TRON: Legacy"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "4_diverse_5",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.8,
+        "top_k": 10,
+        "rec_titles": [
+          "The Dark Knight",
+          "The Matrix",
+          "Guardians of the Galaxy",
+          "Ant-Man",
+          "Zombieland",
+          "The Social Network",
+          "Adventures in Babysitting",
+          "The Wedding Ringer",
+          "GoodFellas",
+          "Raiders of the Lost Ark"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "4_diverse_5",
+      "metrics": {
+        "n": 5,
+        "popular_share": 0.9,
+        "top_k": 10,
+        "rec_titles": [
+          "The Dark Knight",
+          "Guardians of the Galaxy",
+          "Zombieland",
+          "Adventures in Babysitting",
+          "GoodFellas",
+          "The Godfather",
+          "Eternal Sunshine of the Spotless Mind",
+          "Coraline",
+          "Manchester by the Sea",
+          "Pitch Perfect"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "5_old_school_crime",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.9,
+        "top_k": 10,
+        "rec_titles": [
+          "The Shawshank Redemption",
+          "Schindler's List",
+          "The Usual Suspects",
+          "The Silence of the Lambs",
+          "Forrest Gump",
+          "Reservoir Dogs",
+          "Legend",
+          "Now You See Me",
+          "Ocean's Twelve",
+          "Clean"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "5_old_school_crime",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.9,
+        "top_k": 10,
+        "rec_titles": [
+          "The Silence of the Lambs",
+          "The Usual Suspects",
+          "Schindler's List",
+          "L.A. Confidential",
+          "Basic Instinct",
+          "Mindcage",
+          "Now You See Me",
+          "The Matrix",
+          "The Lord of the Rings: The Fellowship of the Ring",
+          "The Social Network"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "horror_classic_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.7,
+        "top_k": 10,
+        "rec_titles": [
+          "Insidious",
+          "Insidious: Chapter 2",
+          "Sinister",
+          "Oculus",
+          "The Visit",
+          "The Conjuring 2",
+          "As Above, So Below",
+          "Day of the Woman",
+          "The Invitation",
+          "Alone"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "horror_classic_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.7,
+        "top_k": 10,
+        "rec_titles": [
+          "Us",
+          "A Quiet Place",
+          "Midsommar",
+          "There's Something Wrong with the Children",
+          "Orphan",
+          "Blood",
+          "The Boogeyman",
+          "Insidious",
+          "Insidious: Chapter 2",
+          "The Conjuring 2"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "comedy_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.6,
+        "top_k": 10,
+        "rec_titles": [
+          "Forgetting Sarah Marshall",
+          "Knocked Up",
+          "Pineapple Express",
+          "Role Models",
+          "Juno",
+          "Project X",
+          "Friday",
+          "17 Again",
+          "Adventures in Babysitting",
+          "You Are So Not Invited to My Bat Mitzvah"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "comedy_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.6,
+        "top_k": 10,
+        "rec_titles": [
+          "Forgetting Sarah Marshall",
+          "Knocked Up",
+          "Project X",
+          "Friday",
+          "Zombieland",
+          "The Social Network",
+          "Adventures in Babysitting",
+          "The Wedding Ringer",
+          "I Love You, Man",
+          "Horrible Bosses"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "anime_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.8,
+        "top_k": 10,
+        "rec_titles": [
+          "Eternal Sunshine of the Spotless Mind",
+          "The Lord of the Rings: The Two Towers",
+          "The Lord of the Rings: The Return of the King",
+          "Finding Nemo",
+          "Am\u00e9lie",
+          "Coraline",
+          "My Neighbor Totoro",
+          "The Secret World of Arrietty",
+          "Slumberland",
+          "Barbie in A Mermaid Tale"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "anime_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.8,
+        "top_k": 10,
+        "rec_titles": [
+          "Eternal Sunshine of the Spotless Mind",
+          "The Lord of the Rings: The Two Towers",
+          "Coraline",
+          "My Neighbor Totoro",
+          "The Garden of Words",
+          "A Silent Voice: The Movie",
+          "I Want to Eat Your Pancreas",
+          "Three Steps Above Heaven",
+          "Nausica\u00e4 of the Valley of the Wind",
+          "Castle in the Sky"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "marvel_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 1.0,
+        "top_k": 10,
+        "rec_titles": [
+          "WALL\u00b7E",
+          "The Departed",
+          "Up",
+          "The Prestige",
+          "The Dark Knight",
+          "Iron Man 2",
+          "Iron Man 3",
+          "Avengers: Age of Ultron",
+          "The Avengers",
+          "Avengers: Infinity War"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "marvel_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 1.0,
+        "top_k": 10,
+        "rec_titles": [
+          "The Dark Knight Rises",
+          "Up",
+          "WALL\u00b7E",
+          "Iron Man 3",
+          "Iron Man 2",
+          "Avengers: Age of Ultron",
+          "Captain America: The Winter Soldier",
+          "X2",
+          "X-Men",
+          "Hancock"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "romance_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.6,
+        "top_k": 10,
+        "rec_titles": [
+          "Cinderella Man",
+          "The Pursuit of Happyness",
+          "A Walk to Remember",
+          "Love Actually",
+          "P.S. I Love You",
+          "The Longest Ride",
+          "Casablanca",
+          "Sex and Luc\u00eda",
+          "Last Tango in Paris",
+          "Life in a Year"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "romance_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.6,
+        "top_k": 10,
+        "rec_titles": [
+          "Cinderella Man",
+          "The Pursuit of Happyness",
+          "The Longest Ride",
+          "Casablanca",
+          "Atonement",
+          "The Duchess",
+          "Lady Chatterley's Lover",
+          "Sense and Sensibility",
+          "Manchester by the Sea",
+          "Brooklyn"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "neo_noir_2",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.8,
+        "top_k": 10,
+        "rec_titles": [
+          "Raiders of the Lost Ark",
+          "The Godfather",
+          "The Godfather Part II",
+          "One Flew Over the Cuckoo's Nest",
+          "The Empire Strikes Back",
+          "Blade Runner 2049",
+          "I Am Legend",
+          "Judge Dredd",
+          "Gravity",
+          "In the Shadow of the Moon"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_movie",
+      "scenario": "edge_single_inception",
+      "metrics": {
+        "n": 1,
+        "popular_share": 1.0,
+        "top_k": 10,
+        "rec_titles": [
+          "The Dark Knight",
+          "The Matrix",
+          "Fight Club",
+          "The Lord of the Rings: The Return of the King",
+          "The Lord of the Rings: The Two Towers",
+          "Guardians of the Galaxy",
+          "Ant-Man",
+          "The Matrix Resurrections",
+          "Uncharted",
+          "TRON: Legacy"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "1_pure_fantasy_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "The Lord of the Rings: The Rings of Power",
+          "The Witcher",
+          "The Last of Us",
+          "The Wheel of Time",
+          "Fallout",
+          "Merlin",
+          "Game of Thrones",
+          "Testament",
+          "Husk to Self",
+          "Motorvalley"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "1_pure_fantasy_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.4,
+        "top_k": 10,
+        "rec_titles": [
+          "The Lord of the Rings: The Rings of Power",
+          "The Witcher",
+          "See",
+          "A Knight of the Seven Kingdoms",
+          "Obi-Wan Kenobi",
+          "Merlin",
+          "Game of Thrones",
+          "Husk to Self",
+          "Testament",
+          "N\u00e9ro the Assassin"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "2_hard_scifi_5",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.3,
+        "top_k": 10,
+        "rec_titles": [
+          "Altered Carbon",
+          "Preacher",
+          "Foundation",
+          "American Gods",
+          "12 Monkeys",
+          "Eyes In The Woods",
+          "Tales From Woodcreek",
+          "Into the Darklands",
+          "TechTown Outbreak",
+          "The Terror"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "2_hard_scifi_5",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.0,
+        "top_k": 10,
+        "rec_titles": [
+          "Raised by Wolves",
+          "His Dark Materials",
+          "Dark Matter",
+          "Into the Darklands",
+          "Eyes In The Woods",
+          "Tales From Woodcreek",
+          "TechTown Outbreak",
+          "Snowpiercer",
+          "Travelers",
+          "Beth"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "2_hard_scifi_5",
+      "metrics": {
+        "n": 5,
+        "popular_share": 0.0,
+        "top_k": 10,
+        "rec_titles": [
+          "Dark Matter",
+          "Raised by Wolves",
+          "Eyes In The Woods",
+          "Tales From Woodcreek",
+          "His Dark Materials",
+          "Snowpiercer",
+          "Age of Umbra",
+          "Into the Darklands",
+          "TechTown Outbreak",
+          "Beth"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "3_adult_superhero_5",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "Loki",
+          "The Umbrella Academy",
+          "Peacemaker",
+          "Gen V",
+          "The Mandalorian",
+          "The Wayfinders",
+          "TechTown Outbreak",
+          "Age of Umbra",
+          "Into the Darklands",
+          "Gifted"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "3_adult_superhero_5",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "Loki",
+          "Peacemaker",
+          "The Umbrella Academy",
+          "Titans",
+          "The Falcon and the Winter Soldier",
+          "Cashero",
+          "The Wayfinders",
+          "What If...?",
+          "X-Men '97",
+          "Teen Titans"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "3_adult_superhero_5",
+      "metrics": {
+        "n": 5,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "Loki",
+          "The Umbrella Academy",
+          "Titans",
+          "The Falcon and the Winter Soldier",
+          "What If...?",
+          "Teen Titans",
+          "Cashero",
+          "The Nowhere Man",
+          "Foundation",
+          "TechTown Outbreak"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "4_psy_thriller_5",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "Breaking Bad",
+          "Narcos",
+          "Better Call Saul",
+          "Ozark",
+          "Killing Eve",
+          "The Asset",
+          "The Gringo Hunters",
+          "Smoke",
+          "The Game",
+          "The Kollective"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "4_psy_thriller_5",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "Ozark",
+          "Dexter",
+          "Fargo",
+          "Mandala Murders",
+          "Land of Sin",
+          "Sugar",
+          "Countdown",
+          "Dark",
+          "The White Lotus",
+          "The Party"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "4_psy_thriller_5",
+      "metrics": {
+        "n": 5,
+        "popular_share": 0.4,
+        "top_k": 10,
+        "rec_titles": [
+          "Ozark",
+          "Dexter",
+          "Mandala Murders",
+          "Land of Sin",
+          "The Haunting of Hill House",
+          "Midnight Mass",
+          "The Twilight Zone",
+          "American Horror Stories",
+          "The White Lotus",
+          "The Party"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "sitcom_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "How I Met Your Mother",
+          "The Big Bang Theory",
+          "Modern Family",
+          "The Office",
+          "Ted Lasso",
+          "Old Heads",
+          "Adults",
+          "Spilling Your Seed",
+          "Shedites",
+          "Joan Rivers: A Dead Funny All-Star Tribute"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "sitcom_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "How I Met Your Mother",
+          "Modern Family",
+          "Community",
+          "Silicon Valley",
+          "Ted Lasso",
+          "Old Heads",
+          "Shedites",
+          "Adults",
+          "Joan Rivers: A Dead Funny All-Star Tribute",
+          "Spilling Your Seed"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "anime_2",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.3,
+        "top_k": 10,
+        "rec_titles": [
+          "Fullmetal Alchemist: Brotherhood",
+          "Solo Leveling",
+          "Naruto Shipp\u016bden",
+          "Naruto",
+          "Hunter x Hunter",
+          "The Nowhere Man",
+          "Teogonia",
+          "Berserk",
+          "Clevatess",
+          "Goblin Slayer"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "crime_3",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "Mindhunter",
+          "Narcos",
+          "Better Call Saul",
+          "Dexter",
+          "Chernobyl",
+          "The Manipulated",
+          "Memory of a Killer",
+          "The Asset",
+          "The Kollective",
+          "The Guest"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "crime_3",
+      "metrics": {
+        "n": 3,
+        "popular_share": 0.6,
+        "top_k": 10,
+        "rec_titles": [
+          "Mindhunter",
+          "Dexter",
+          "The Manipulated",
+          "Memory of a Killer",
+          "Mr. Robot",
+          "Fargo",
+          "CIA",
+          "Run",
+          "Ozark",
+          "House of Cards"
+        ]
+      }
+    },
+    {
+      "test": "popularity_bias_tv",
+      "scenario": "edge_single_stranger_things",
+      "metrics": {
+        "n": 1,
+        "popular_share": 0.5,
+        "top_k": 10,
+        "rec_titles": [
+          "Black Mirror",
+          "The Haunting of Hill House",
+          "Wednesday",
+          "Supernatural",
+          "Squid Game",
+          "Age of Umbra",
+          "TechTown Outbreak",
+          "The Wayfinders",
+          "Into the Darklands",
+          "Tales From Woodcreek"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "2_toy_story_plus_saw_mixed",
+      "metrics": {
+        "expected_neighbor_count": 100,
+        "actual_recs_count": 10,
+        "intersection_count": 5,
+        "overlap": 0.5,
+        "expected_neighbor_titles_sample": [
+          "Forrest Gump",
+          "Star Wars",
+          "Fight Club",
+          "Finding Nemo",
+          "Eternal Sunshine of the Spotless Mind",
+          "Die Hard: With a Vengeance",
+          "Die Hard",
+          "American Beauty",
+          "The Number 23",
+          "Inside"
+        ],
+        "rec_titles": [
+          "The Lion King",
+          "Aladdin",
+          "Twelve Monkeys",
+          "Se7en",
+          "Fargo",
+          "Toy Story 3",
+          "Toy Story 2",
+          "Trick or Treat Scooby-Doo!",
+          "The Great Mouse Detective",
+          "Tarzan II"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "3_lotr_trilogy_fantasy",
+      "metrics": {
+        "expected_neighbor_count": 54,
+        "actual_recs_count": 10,
+        "intersection_count": 5,
+        "overlap": 0.5,
+        "expected_neighbor_titles_sample": [
+          "Forrest Gump",
+          "Star Wars",
+          "The Lion King",
+          "GoodFellas",
+          "The Dark Knight Rises",
+          "Spirited Away",
+          "Batman Begins",
+          "Finding Nemo",
+          "The Departed",
+          "American Beauty"
+        ],
+        "rec_titles": [
+          "The Matrix",
+          "Fight Club",
+          "The Shawshank Redemption",
+          "Memento",
+          "Gladiator",
+          "The Hobbit: The Battle of the Five Armies",
+          "The Hobbit: An Unexpected Journey",
+          "Prince of Persia: The Sands of Time",
+          "The Hobbit: The Desolation of Smaug",
+          "Pirates of the Caribbean: Dead Man's Chest"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "4_diverse_5",
+      "metrics": {
+        "expected_neighbor_count": 173,
+        "actual_recs_count": 10,
+        "intersection_count": 6,
+        "overlap": 0.6,
+        "expected_neighbor_titles_sample": [
+          "Forrest Gump",
+          "Star Wars",
+          "Pirates of the Caribbean: The Curse of the Black Pearl",
+          "The Martian",
+          "Finding Nemo",
+          "Scott Pilgrim vs. the World",
+          "American Beauty",
+          "Three Billboards Outside Ebbing, Missouri",
+          "Role Models",
+          "Hot Tub Time Machine"
+        ],
+        "rec_titles": [
+          "The Dark Knight",
+          "Guardians of the Galaxy",
+          "Zombieland",
+          "Adventures in Babysitting",
+          "GoodFellas",
+          "The Godfather",
+          "Eternal Sunshine of the Spotless Mind",
+          "Coraline",
+          "Manchester by the Sea",
+          "Pitch Perfect"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "5_old_school_crime",
+      "metrics": {
+        "expected_neighbor_count": 60,
+        "actual_recs_count": 10,
+        "intersection_count": 5,
+        "overlap": 0.5,
+        "expected_neighbor_titles_sample": [
+          "Forrest Gump",
+          "Star Wars",
+          "The Lion King",
+          "GoodFellas",
+          "Spirited Away",
+          "Batman Begins",
+          "Finding Nemo",
+          "The Departed",
+          "American Beauty",
+          "The Silence of the Lambs"
+        ],
+        "rec_titles": [
+          "The Silence of the Lambs",
+          "The Usual Suspects",
+          "Schindler's List",
+          "L.A. Confidential",
+          "Basic Instinct",
+          "Mindcage",
+          "Now You See Me",
+          "The Matrix",
+          "The Lord of the Rings: The Fellowship of the Ring",
+          "The Social Network"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "horror_classic_3",
+      "metrics": {
+        "expected_neighbor_count": 115,
+        "actual_recs_count": 10,
+        "intersection_count": 6,
+        "overlap": 0.6,
+        "expected_neighbor_titles_sample": [
+          "Insidious: The Last Key",
+          "A Quiet Place Part II",
+          "Insidious: Chapter 3",
+          "10 Cloverfield Lane",
+          "Three Billboards Outside Ebbing, Missouri",
+          "Wind River",
+          "Devil",
+          "Moonlight",
+          "Searching",
+          "The Innkeepers"
+        ],
+        "rec_titles": [
+          "Us",
+          "A Quiet Place",
+          "Midsommar",
+          "There's Something Wrong with the Children",
+          "Orphan",
+          "Blood",
+          "The Boogeyman",
+          "Insidious",
+          "Insidious: Chapter 2",
+          "The Conjuring 2"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "comedy_3",
+      "metrics": {
+        "expected_neighbor_count": 105,
+        "actual_recs_count": 10,
+        "intersection_count": 6,
+        "overlap": 0.6,
+        "expected_neighbor_titles_sample": [
+          "Scott Pilgrim vs. the World",
+          "Source Code",
+          "Hot Fuzz",
+          "The Invention of Lying",
+          "Get Him to the Greek",
+          "Role Models",
+          "Hot Tub Time Machine",
+          "The Descendants",
+          "The Five-Year Engagement",
+          "Harold & Kumar Escape from Guantanamo Bay"
+        ],
+        "rec_titles": [
+          "Forgetting Sarah Marshall",
+          "Knocked Up",
+          "Project X",
+          "Friday",
+          "Zombieland",
+          "The Social Network",
+          "Adventures in Babysitting",
+          "The Wedding Ringer",
+          "I Love You, Man",
+          "Horrible Bosses"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "anime_3",
+      "metrics": {
+        "expected_neighbor_count": 132,
+        "actual_recs_count": 10,
+        "intersection_count": 8,
+        "overlap": 0.8,
+        "expected_neighbor_titles_sample": [
+          "Forrest Gump",
+          "Star Wars",
+          "Pirates of the Caribbean: The Curse of the Black Pearl",
+          "Finding Nemo",
+          "American Beauty",
+          "The Cat Returns",
+          "Lupin the Third: The Castle of Cagliostro",
+          "The Disappearance of Haruhi Suzumiya",
+          "The Sky Crawlers",
+          "Penguin Highway"
+        ],
+        "rec_titles": [
+          "Eternal Sunshine of the Spotless Mind",
+          "The Lord of the Rings: The Two Towers",
+          "Coraline",
+          "My Neighbor Totoro",
+          "The Garden of Words",
+          "A Silent Voice: The Movie",
+          "I Want to Eat Your Pancreas",
+          "Three Steps Above Heaven",
+          "Nausica\u00e4 of the Valley of the Wind",
+          "Castle in the Sky"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "marvel_3",
+      "metrics": {
+        "expected_neighbor_count": 126,
+        "actual_recs_count": 10,
+        "intersection_count": 8,
+        "overlap": 0.8,
+        "expected_neighbor_titles_sample": [
+          "Blue Beetle",
+          "Forrest Gump",
+          "Star Wars",
+          "Ratatouille",
+          "Pirates of the Caribbean: The Curse of the Black Pearl",
+          "Avatar",
+          "The Martian",
+          "Finding Nemo",
+          "American Beauty",
+          "The Hunger Games"
+        ],
+        "rec_titles": [
+          "The Dark Knight Rises",
+          "Up",
+          "WALL\u00b7E",
+          "Iron Man 3",
+          "Iron Man 2",
+          "Avengers: Age of Ultron",
+          "Captain America: The Winter Soldier",
+          "X2",
+          "X-Men",
+          "Hancock"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "romance_3",
+      "metrics": {
+        "expected_neighbor_count": 140,
+        "actual_recs_count": 10,
+        "intersection_count": 6,
+        "overlap": 0.6,
+        "expected_neighbor_titles_sample": [
+          "Her",
+          "Lady Bird",
+          "Three Billboards Outside Ebbing, Missouri",
+          "The Holiday",
+          "Darkest Hour",
+          "Paddington 2",
+          "Dan in Real Life",
+          "The Break-Up",
+          "Jackie",
+          "Wuthering Heights"
+        ],
+        "rec_titles": [
+          "Cinderella Man",
+          "The Pursuit of Happyness",
+          "The Longest Ride",
+          "Casablanca",
+          "Atonement",
+          "The Duchess",
+          "Lady Chatterley's Lover",
+          "Sense and Sensibility",
+          "Manchester by the Sea",
+          "Brooklyn"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_movie",
+      "scenario": "neo_noir_2",
+      "metrics": {
+        "expected_neighbor_count": 100,
+        "actual_recs_count": 10,
+        "intersection_count": 7,
+        "overlap": 0.7,
+        "expected_neighbor_titles_sample": [
+          "Forrest Gump",
+          "Star Wars",
+          "Fight Club",
+          "Eternal Sunshine of the Spotless Mind",
+          "Scott Pilgrim vs. the World",
+          "Her",
+          "Source Code",
+          "American Beauty",
+          "Headhunters",
+          "The Descendants"
+        ],
+        "rec_titles": [
+          "The Terminator",
+          "Terminator 2: Judgment Day",
+          "Twelve Monkeys",
+          "Raiders of the Lost Ark",
+          "Taxi Driver",
+          "The Bank Job",
+          "Fargo",
+          "Collateral",
+          "Pulp Fiction",
+          "Ocean's Twelve"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_tv",
+      "scenario": "1_pure_fantasy_3",
+      "metrics": {
+        "expected_neighbor_count": 70,
+        "actual_recs_count": 10,
+        "intersection_count": 7,
+        "overlap": 0.7,
+        "expected_neighbor_titles_sample": [
+          "Ted Lasso",
+          "Fallout",
+          "Wednesday",
+          "Invasion",
+          "Gen V",
+          "Pluribus",
+          "ONE PIECE",
+          "Murderbot",
+          "BEEF",
+          "The Walking Dead: Dead City"
+        ],
+        "rec_titles": [
+          "The Lord of the Rings: The Rings of Power",
+          "The Witcher",
+          "See",
+          "A Knight of the Seven Kingdoms",
+          "Obi-Wan Kenobi",
+          "Merlin",
+          "Game of Thrones",
+          "Husk to Self",
+          "Testament",
+          "N\u00e9ro the Assassin"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_tv",
+      "scenario": "2_hard_scifi_5",
+      "metrics": {
+        "expected_neighbor_count": 97,
+        "actual_recs_count": 10,
+        "intersection_count": 4,
+        "overlap": 0.4,
+        "expected_neighbor_titles_sample": [
+          "Doctor Who",
+          "The Mandalorian",
+          "Fallout",
+          "Star Wars: Andor",
+          "The Last Ship",
+          "His Dark Materials",
+          "Pluribus",
+          "Penny Dreadful",
+          "Firefly",
+          "Murderbot"
+        ],
+        "rec_titles": [
+          "Dark Matter",
+          "Raised by Wolves",
+          "Eyes In The Woods",
+          "Tales From Woodcreek",
+          "His Dark Materials",
+          "Snowpiercer",
+          "Age of Umbra",
+          "Into the Darklands",
+          "TechTown Outbreak",
+          "Beth"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_tv",
+      "scenario": "3_adult_superhero_5",
+      "metrics": {
+        "expected_neighbor_count": 136,
+        "actual_recs_count": 10,
+        "intersection_count": 7,
+        "overlap": 0.7,
+        "expected_neighbor_titles_sample": [
+          "Fallout",
+          "Star Wars: Andor",
+          "Arcane",
+          "His Dark Materials",
+          "Pluribus",
+          "Firefly",
+          "Space Force",
+          "Murderbot",
+          "BLUE EYE SAMURAI",
+          "Devil May Cry"
+        ],
+        "rec_titles": [
+          "Loki",
+          "The Umbrella Academy",
+          "Titans",
+          "The Falcon and the Winter Soldier",
+          "What If...?",
+          "Teen Titans",
+          "Cashero",
+          "The Nowhere Man",
+          "Foundation",
+          "TechTown Outbreak"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_tv",
+      "scenario": "4_psy_thriller_5",
+      "metrics": {
+        "expected_neighbor_count": 123,
+        "actual_recs_count": 10,
+        "intersection_count": 5,
+        "overlap": 0.5,
+        "expected_neighbor_titles_sample": [
+          "House",
+          "American Horror Story",
+          "Orange Is the New Black",
+          "House of Cards",
+          "Sons of Anarchy",
+          "Fallout",
+          "Ray Donovan",
+          "Twin Peaks",
+          "Luther",
+          "Black Bird"
+        ],
+        "rec_titles": [
+          "Ozark",
+          "Dexter",
+          "Mandala Murders",
+          "Land of Sin",
+          "The Haunting of Hill House",
+          "Midnight Mass",
+          "The Twilight Zone",
+          "American Horror Stories",
+          "The White Lotus",
+          "The Party"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_tv",
+      "scenario": "sitcom_3",
+      "metrics": {
+        "expected_neighbor_count": 75,
+        "actual_recs_count": 10,
+        "intersection_count": 5,
+        "overlap": 0.5,
+        "expected_neighbor_titles_sample": [
+          "The Big Bang Theory",
+          "Modern Family",
+          "House",
+          "New Girl",
+          "Parks and Recreation",
+          "The Rookie",
+          "Orange Is the New Black",
+          "Veep",
+          "Barry",
+          "Space Force"
+        ],
+        "rec_titles": [
+          "How I Met Your Mother",
+          "Modern Family",
+          "Community",
+          "Silicon Valley",
+          "Ted Lasso",
+          "Old Heads",
+          "Shedites",
+          "Adults",
+          "Joan Rivers: A Dead Funny All-Star Tribute",
+          "Spilling Your Seed"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_tv",
+      "scenario": "anime_2",
+      "metrics": {
+        "expected_neighbor_count": 65,
+        "actual_recs_count": 10,
+        "intersection_count": 6,
+        "overlap": 0.6,
+        "expected_neighbor_titles_sample": [
+          "Bleach",
+          "My Hero Academia",
+          "Black Clover",
+          "Yu-Gi-Oh! Duel Monsters",
+          "ONE PIECE",
+          "Cowboy Bebop",
+          "Mob Psycho 100",
+          "The Haunting of Hill House",
+          "Monster",
+          "Steins;Gate"
+        ],
+        "rec_titles": [
+          "Fullmetal Alchemist: Brotherhood",
+          "Demon Slayer: Kimetsu no Yaiba",
+          "Hunter x Hunter",
+          "Solo Leveling",
+          "Jujutsu Kaisen",
+          "Clevatess",
+          "New Saga",
+          "The Nowhere Man",
+          "Teogonia",
+          "Goblin Slayer"
+        ]
+      }
+    },
+    {
+      "test": "graph_overlap_tv",
+      "scenario": "crime_3",
+      "metrics": {
+        "expected_neighbor_count": 71,
+        "actual_recs_count": 10,
+        "intersection_count": 6,
+        "overlap": 0.6,
+        "expected_neighbor_titles_sample": [
+          "The Big Bang Theory",
+          "Friends",
+          "The Office",
+          "House",
+          "Orange Is the New Black",
+          "House of Cards",
+          "Sons of Anarchy",
+          "Ted Lasso",
+          "Barry",
+          "Luther"
+        ],
+        "rec_titles": [
+          "Mindhunter",
+          "Dexter",
+          "The Manipulated",
+          "Memory of a Killer",
+          "Mr. Robot",
+          "Fargo",
+          "CIA",
+          "Run",
+          "Ozark",
+          "House of Cards"
+        ]
+      }
+    }
+  ]
+}

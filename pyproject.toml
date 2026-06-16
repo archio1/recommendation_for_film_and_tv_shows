@@ -1,0 +1,95 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "recommendation-system"
+version = "0.1.0"
+description = "A recommendation system using LightGCN and TMDB dataset with Llama integration"
+authors = [
+    { name = "Artem Tatarchuk, Bohdan Kulchitskiy", email = "arti123t@gmail.com" }
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { text = "MIT" }
+requires-python = ">=3.10"
+#keywords = ["recommendation", "LightGCN", "TMDB", "Llama"]
+#classifiers = [
+#    "Development Status :: 3 - Alpha",
+#    "Intended Audience :: Developers",
+#    "License :: OSI Approved :: MIT License",
+#    "Programming Language :: Python :: 3.13",
+#    "Topic :: Software Development :: Machine Learning",
+#]
+dependencies = [
+    # core ML / graph — torch/PyG pinned to the tested line (dev venv runs
+    # torch 2.6 + PyG 2.7); torch is the CPU build from PyPI by default, see README.
+    "torch>=2.6,<2.7",
+    "torch-geometric>=2.7,<2.8",
+    "faiss-cpu==1.13.2",
+    "sentence-transformers>=5.2",
+    "scikit-learn>=1.7.2",
+    "scipy",
+    "numpy",
+    "pandas",
+    "pyarrow>=15",  # parquet engine for pandas to_parquet/read_parquet (dataset pipeline)
+    # bot / GUI / IO
+    "aiogram>=3.25",
+    "flet>=0.28,<0.29",  # pin to tested 0.28 line; flet 0.70+ rewrote control ctors (breaks GUI)
+    "requests>=2.32",
+    "python-dotenv>=0.5.1",
+    "tqdm>=4.67",
+    # viz / notebooks
+    "matplotlib",
+    "plotly>=6.5.0",
+    "seaborn>=0.13.2",
+]
+
+[project.scripts]
+recsys-bot = "recommendation_system.models.gnn.movie_bot:run"
+recsys-gui = "recommendation_system.models.gnn.trainer_gui:run"
+recsys-train = "recommendation_system.models.gnn.trainer:main"
+recsys-dataset = "recommendation_system.data.make_dataset:main"
+recsys-embed = "recommendation_system.models.gnn.compute_embeddings:main"
+recsys-fill-cache = "recommendation_system.models.gnn.fill_cache:run_prefetch"
+recsys-backfill = "recommendation_system.data.backfill_translations:main"
+recsys-check-data = "recommendation_system.data.check_data:main"
+recsys-trakt = "recommendation_system.data.trakt_collector:main"
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+    "jupyterlab",
+]
+
+#[project.urls]
+#Repository = "https://github.com/yourusername/recommendation-for-film-and-tv-shows"
+#Issues = "https://github.com/yourusername/recommendation-for_film_and_tv_shows/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recommendation_system"]
+
+#[tool.ruff]
+#line-length = 88
+#select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "slow: tests that load real SBERT or hit external services (run with -m slow)",
+    "needs_real_models: tests that require trained checkpoints + parquet on disk",
+    "quality: trajectory and quality-metric tests that emit JSON reports",
+    "golden: must-contain-ids recall tests (Golden Standard)",
+    "media_dna: TMDB keyword overlap tests (Media DNA)",
+    "popularity: popularity-bias detection tests (top-10% by vote_count)",
+    "graph_overlap: LightGCN graph-neighbor prediction tests",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(levelname)s %(name)s: %(message)s"
+
+#[tool.tox]
+#requires = ["tox>=4.19"]
+#env_list = ["3.13"]
