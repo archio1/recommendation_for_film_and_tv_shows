@@ -474,6 +474,39 @@ def _parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _cuda_arch_unsupported() -> str | None:
+    """Detect a GPU newer than the installed torch build (e.g. RTX 50-series
+    sm_120 on a torch 2.6/cu124 wheel that maxes out at sm_90).
+
+    Returns a human-readable reason string when the current CUDA device's
+    architecture is too new for the build's compiled kernels, else None.
+
+    Best-effort and fully guarded: any probing error returns None (assume
+    supported) so this check can never block an otherwise-working GPU. Only
+    flags a strictly newer major arch — minor bumps are left alone since PTX
+    JIT usually covers them.
+    """
+    try:
+        device_major = torch.cuda.get_device_capability()[0]
+        supported = [a for a in torch.cuda.get_arch_list() if a.startswith('sm_')]
+        if not supported:
+            return None
+        # 'sm_90' -> 9, 'sm_120' -> 12
+        max_major = max(int(a.split('_')[1]) // 10 for a in supported)
+        if device_major <= max_major:
+            return None
+        return (
+            f"GPU {torch.cuda.get_device_name()} has CUDA capability "
+            f"sm_{device_major}x, but the installed PyTorch build only supports "
+            f"{torch.cuda.get_arch_list()}. CUDA kernels would fail mid-training "
+            f"('no kernel image is available'). Install a matching build "
+            f"(RTX 50-series: torch 2.7 cu128 — see README GPU note) or rerun "
+            f"with --device cpu."
+        )
+    except Exception:
+        return None
+
+
 def main(argv=None, *, on_epoch_end=None, stop_flag=None) -> int:
     """
     Args:
@@ -490,6 +523,15 @@ def main(argv=None, *, on_epoch_end=None, stop_flag=None) -> int:
         device = args.device
         if device == 'cuda' and not torch.cuda.is_available():
             logger.warning("--device cuda requested but CUDA not available, falling back to cpu")
+            device = 'cpu'
+
+    # Fail fast on a GPU too new for the installed torch build, instead of
+    # crashing deep inside the first epoch with a raw CUDA RuntimeError.
+    if device == 'cuda':
+        reason = _cuda_arch_unsupported()
+        if reason is not None:
+            logger.warning(reason)
+            logger.warning("Falling back to --device cpu (slower but functional).")
             device = 'cpu'
 
     data_dir = args.data_dir or (PROCESSED_DIR / args.domain)

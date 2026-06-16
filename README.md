@@ -80,6 +80,20 @@ The admin GUI is documented in **[docs/trainer_gui_guide.md](docs/trainer_gui_gu
 > to serve the bot and GUI. For GPU **training**, install the CUDA build matching
 > your toolkit instead, e.g.
 > `uv pip install torch==2.6.0+cu124 --index https://download.pytorch.org/whl/cu124`.
+>
+> **RTX 50-series (Blackwell, `sm_120`):** torch 2.6/cu124 ships no `sm_120`
+> kernels, so training crashes with `CUDA error: no kernel image is available for
+> execution on the device`. Use the cu128 build of torch 2.7 instead. The project
+> code only uses the pure-Python parts of PyTorch Geometric (`MessagePassing`,
+> `utils`, `data.Data`), so the ABI-pinned PyG extensions can simply be removed —
+> `torch-geometric` itself stays at 2.7 and needs no upgrade:
+> ```bash
+> uv pip uninstall pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv
+> uv pip install torch==2.7.* --index-url https://download.pytorch.org/whl/cu128
+> ```
+> Verify with `python -c "import torch; print(torch.cuda.get_arch_list())"` (must
+> list `sm_120`). No GPU yet? Train on CPU meanwhile: `recsys-train --device cpu`
+> (or pick CPU in the GUI) — slower, but it runs.
 
 ---
 
@@ -209,6 +223,7 @@ cleanly** when those are absent, so a fresh checkout stays green.
 - [ ] Periodic retrain pipeline (`scripts/retrain.py`, see `spec/retrain-pipeline.md`)
 - [ ] Taste-relative de-bias (penalize popularity relative to user profile)
 - [ ] Automated raw-dataset download scripts (MovieLens / TMDB)
+- [ ] Translate remaining Russian code comments/docstrings to English (~935 fragments, 28 files under `src/`); adopt "new code in English"
 
 ---
 
